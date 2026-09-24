@@ -35,10 +35,9 @@
    without permissions (exFAT, FAT32, or a Mac volume that ignores ownership) keeps nothing private,
    and the installer says so.
 6. **Hot copies run as you**, with your permissions, never elevated.
-7. **On macOS, Full Disk Access is a real grant.** It is needed for a source in Desktop, Documents,
-   Downloads or another place macOS keeps private, and when macOS refuses the job the backup drive.
-   Given to the PowerShell the daily job runs, it lets that PowerShell read those places whenever it
-   is the program macOS holds responsible, including when something else starts it. Keep the source
+7. **On macOS, Full Disk Access is a broad grant.** It is needed for a source in Desktop,
+   Documents, Downloads or another place macOS keeps private, and when macOS refuses the job the
+   backup drive. It applies to that PowerShell as a whole, not only to restic-twin. Keep the source
    outside those folders and you can usually leave it off.
 
 Out of scope: protecting the backups from someone or something that is already an administrator on
