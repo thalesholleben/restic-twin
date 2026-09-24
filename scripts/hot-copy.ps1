@@ -20,9 +20,9 @@ if ($settings.HotCopies.Count -eq 0) {
 }
 if (-not (Test-Path -LiteralPath $settings.HotCopiesPath -PathType Container)) {
     # Only install.ps1 creates it, with its permissions; created here it would inherit the drive's.
-    throw "$($settings.HotCopiesPath) is missing. Run scripts\install.ps1 again: it creates it with the right permissions."
+    throw "$($settings.HotCopiesPath) is missing. Run $(Show-Path 'scripts\install.ps1') again: it creates it with the right permissions."
 }
-$lock = Enter-RunLock -Name (Get-RunLockName -Kind hot-copy -Settings $settings)
+$lock = Enter-RunLock -Name (Get-RunLockName -Kind hot-copy -Settings $settings) -Folder $settings.HotCopiesPath
 if ($null -eq $lock) {
     Write-Output 'Another hot copy run is in progress.'
     exit 0

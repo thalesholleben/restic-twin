@@ -19,10 +19,9 @@ Write-Host "Mirror:        $($settings.MirrorPath)"
 Write-Host "History:       $($settings.RepositoryPath)"
 Write-Host "Schedule:      every day at $($settings.DailyAt)"
 
-$destinationDrive = [IO.Path]::GetPathRoot($settings.DestinationRoot)
-$driveReady = Test-Path -LiteralPath $destinationDrive -PathType Container
-if (-not $driveReady) {
-    Write-Host "Destination:   drive $destinationDrive is not available; plug it in to see the last runs" -ForegroundColor Red
+$destination = Test-DestinationAvailable -DestinationRoot $settings.DestinationRoot
+if (-not $destination.Ok) {
+    Write-Host "Destination:   $($destination.Message) Plug it in to see the last runs." -ForegroundColor Red
 }
 else {
     $latestPath = [IO.Path]::Combine($settings.LogsPath, 'latest.json')
@@ -36,19 +35,9 @@ else {
         Write-Host 'Last run:      none yet' -ForegroundColor Yellow
     }
 
-    $runsPath = [IO.Path]::Combine($settings.LogsPath, 'runs.jsonl')
-    $lastSuccess = $null
-    if (Test-Path -LiteralPath $runsPath -PathType Leaf) {
-        foreach ($line in [IO.File]::ReadAllLines($runsPath)) {
-            if ($line -notmatch '"status"\s*:\s*"success"') { continue }
-            try {
-                # PowerShell 7 turns ISO dates in JSON into DateTime by itself, 5.1 leaves them as text.
-                $finished = ($line | ConvertFrom-Json).finished_at
-                if ($finished -is [datetime]) { $lastSuccess = [DateTimeOffset]$finished }
-                else { $lastSuccess = [DateTimeOffset]::Parse([string]$finished, [Globalization.CultureInfo]::InvariantCulture) }
-            }
-            catch { }
-        }
+    $history = Get-RunHistory -Settings $settings
+    $lastSuccess = $history.LastSuccess
+    if ($history.Found) {
         if ($lastSuccess) {
             $age = [DateTimeOffset]::Now - $lastSuccess
             $color = 'Gray'
@@ -80,25 +69,15 @@ else {
     }
 }
 
-foreach ($name in @($script:DailyTaskName, $script:HotCopyTaskName)) {
-    try {
-        $task = Get-ScheduledTask -TaskName $name -ErrorAction Stop
-        $info = Get-ScheduledTaskInfo -TaskName $name
-        Write-Host "Task:          '$name' $($task.State), next $($info.NextRunTime), last result $($info.LastTaskResult)"
-    }
-    catch {
-        # A task that runs as SYSTEM cannot be read from a shell that is not elevated.
-        if ($name -eq $script:DailyTaskName) {
-            Write-Host "Task:          '$name' not readable from this shell (run elevated), or not installed" -ForegroundColor Yellow
-        }
-    }
+foreach ($line in @(Get-ScheduleStatusLines)) {
+    Write-Host $line
 }
 
 $installRoot = Get-InstallRoot
 if (-not $settings.ProjectRoot.Equals($installRoot, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $installRoot)) {
     $different = @(Get-InstalledFileDifferences -Settings $settings)
     if ($different.Count -gt 0) {
-        Write-Host "Installed:     the scheduled tasks run an older copy ($($different.Count) file(s) differ). Run scripts\install.ps1 again, elevated." -ForegroundColor Yellow
+        Write-Host "Installed:     the scheduled jobs run an older copy ($($different.Count) file(s) differ). Run $(Show-Path 'scripts\install.ps1') again, elevated." -ForegroundColor Yellow
     }
     else {
         Write-Host 'Installed:     up to date with this folder'

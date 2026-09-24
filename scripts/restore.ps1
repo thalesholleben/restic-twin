@@ -20,7 +20,7 @@ if (-not $TargetPath) {
     $TargetPath = [IO.Path]::Combine($settings.RestoresPath, 'restore_' + (Get-Date -Format 'yyyy-MM-dd_HHmmss'))
 }
 if (-not (Test-AbsoluteLocalPath $TargetPath)) {
-    throw "TargetPath must be an absolute path on a drive letter: '$TargetPath'."
+    throw "TargetPath must be an absolute path: '$TargetPath'."
 }
 $TargetPath = ConvertTo-NormalizedPath $TargetPath
 if (Test-PathInside $TargetPath $settings.SourcePath) {
@@ -38,8 +38,8 @@ if (Test-Path -LiteralPath $TargetPath) {
 New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
 # "snapshot:/C/Users/you/Projects" restores what is inside the source folder straight into the
 # target. Without it restic rebuilds the whole path (<target>\C\Users\you\...), parents included,
-# with the attributes of folders like C:\Users, which are read-only.
-$sourceInSnapshot = '/' + $settings.SourcePath.Replace(':', '').Replace('\', '/').TrimEnd('/')
+# with the attributes of folders like C:\Users, which are read-only. Same on macOS, /Users/you/...
+$sourceInSnapshot = ConvertTo-SnapshotPath -Path $settings.SourcePath
 $arguments = (Get-ResticBaseArguments -Settings $settings -ReadOnly) + @('restore', "${Snapshot}:$sourceInSnapshot", '--target', $TargetPath, '--verify')
 if ($Snapshot -eq 'latest') {
     # Only our snapshots, in case the repository is shared with other backups.

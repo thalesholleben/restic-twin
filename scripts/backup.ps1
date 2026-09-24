@@ -3,11 +3,15 @@ param(
     [string]$ConfigPath,
     [switch]$NoVss,
     [switch]$SkipMirror,
-    [switch]$SkipMaintenance
+    [switch]$SkipMaintenance,
+    [switch]$IfDue
 )
 
 # The daily run: snapshot, change report, then the mirror, then retention. The order matters: the
 # history is written before the mirror, so a deletion you did today is still in yesterday's snapshot.
+#
+# -IfDue is for launchd, which starts this every hour on macOS: the run only happens when nothing
+# succeeded since the last DailyAt (see Test-BackupDue). -NoVss only means something on Windows.
 
 # One clean line instead of a stack trace, and exit code 1 for the Task Scheduler.
 trap { [Console]::Error.WriteLine('error: ' + $_.Exception.Message); exit 1 }
@@ -17,7 +21,18 @@ Set-StrictMode -Version Latest
 Enable-Utf8NativeOutput
 
 $settings = Get-BackupSettings -ConfigPath $ConfigPath
-$lock = Enter-RunLock -Name (Get-RunLockName -Kind backup -Settings $settings)
+# Before the lock and before writing anything: on macOS the lock file lives in the destination, and
+# an unmounted drive must end here, not in a folder created on the boot disk.
+$destination = Test-DestinationAvailable -DestinationRoot $settings.DestinationRoot
+if (-not $destination.Ok) {
+    [Console]::Error.WriteLine('error: ' + $destination.Message)
+    exit 1
+}
+if ($IfDue) {
+    $history = Get-RunHistory -Settings $settings
+    if (-not (Test-BackupDue -DailyAt $settings.DailyAt -LastSuccess $history.LastSuccess -LastAttempt $history.LastAttempt)) { exit 0 }
+}
+$lock = Enter-RunLock -Name (Get-RunLockName -Kind backup -Settings $settings) -Folder $settings.LogsPath
 if ($null -eq $lock) {
     Write-Host 'Another backup is running. Nothing to do.'
     exit 0
@@ -30,7 +45,7 @@ $errorMessage = $null
 $previousSnapshotId = $null
 $currentSnapshotId = $null
 $resticExitCode = $null
-$robocopyExitCode = $null
+$mirrorExitCode = $null
 $unreadableCount = 0
 
 function Invoke-Maintenance {
@@ -57,15 +72,11 @@ function Invoke-Maintenance {
 }
 
 try {
-    $destinationDrive = [IO.Path]::GetPathRoot($settings.DestinationRoot)
-    if (-not (Test-Path -LiteralPath $destinationDrive -PathType Container)) {
-        throw "Destination drive $destinationDrive is not available."
-    }
     if (-not (Test-Path -LiteralPath $settings.SourcePath -PathType Container)) {
         throw "Source folder not found: $($settings.SourcePath)"
     }
     if (-not (Test-Path -LiteralPath $settings.ResticPath -PathType Leaf)) {
-        throw "restic not found at $($settings.ResticPath). Run scripts\install-restic.ps1."
+        throw "restic not found at $($settings.ResticPath). Run $(Show-Path 'scripts\install-restic.ps1')."
     }
     if (-not (Test-Path -LiteralPath $settings.ExcludesPath -PathType Leaf)) {
         throw "Exclude list not found: $($settings.ExcludesPath)"
@@ -74,9 +85,11 @@ try {
         throw "Password file not found: $($settings.PasswordFile)"
     }
     if (-not (Test-Path -LiteralPath (Join-Path $settings.RepositoryPath 'config') -PathType Leaf)) {
-        throw "No restic repository at $($settings.RepositoryPath). Run scripts\install.ps1 first."
+        throw "No restic repository at $($settings.RepositoryPath). Run $(Show-Path 'scripts\install.ps1') first."
     }
-    if (-not $NoVss -and -not (Test-IsAdministrator)) {
+    # restic reads through VSS only on Windows. On macOS it reads the files as they are.
+    $useVss = $script:OnWindows -and -not $NoVss
+    if ($useVss -and -not (Test-IsAdministrator)) {
         throw 'VSS snapshots need an elevated shell. Run this from an elevated PowerShell, or pass -NoVss (files held open by other programs may then be skipped).'
     }
     $patterns = @(Get-ExcludePatterns -Path $settings.ExcludesPath)
@@ -86,7 +99,7 @@ try {
     if (-not $SkipMirror) { $needed += 'MirrorPath' }
     foreach ($name in $needed) {
         if (-not (Test-Path -LiteralPath $settings[$name] -PathType Container)) {
-            throw "$($settings[$name]) is missing. Run scripts\install.ps1 again: it creates it with the right permissions."
+            throw "$($settings[$name]) is missing. Run $(Show-Path 'scripts\install.ps1') again: it creates it with the right permissions."
         }
     }
 
@@ -94,9 +107,9 @@ try {
     $resticExcludes = Join-Path $settings.LogsPath 'restic-excludes.txt'
     Write-Utf8NoBom -Path $resticExcludes -Content ((@(Get-ResticExcludeLines -SourcePath $settings.SourcePath -Patterns $patterns) -join "`n") + "`n")
 
-    $free = (New-Object IO.DriveInfo($destinationDrive)).AvailableFreeSpace
+    $free = Get-DestinationFreeBytes -Path $settings.DestinationRoot
     if ($free -lt [long]($settings.MinimumFreeSpaceGB * 1GB)) {
-        throw "Only $([math]::Round($free / 1GB, 1)) GB free on $destinationDrive, below MinimumFreeSpaceGB ($($settings.MinimumFreeSpaceGB))."
+        throw "Only $([math]::Round($free / 1GB, 1)) GB free for $($settings.DestinationRoot), below MinimumFreeSpaceGB ($($settings.MinimumFreeSpaceGB))."
     }
 
     Write-Log -Message "Backup started. Source: $($settings.SourcePath)"
@@ -115,9 +128,9 @@ try {
     $backupArguments = (Get-ResticBaseArguments -Settings $settings) + @(
         '--json', 'backup', $settings.SourcePath,
         '--tag', $script:ResticTag,
-        '--iexclude-file', $resticExcludes
+        $script:ResticExcludeFlag, $resticExcludes
     )
-    if (-not $NoVss) { $backupArguments += '--use-fs-snapshot' }
+    if ($useVss) { $backupArguments += '--use-fs-snapshot' }
     $resticLog = Join-Path $settings.LogsPath "restic-backup_$runId.jsonl"
     $resticExitCode = Invoke-NativeLogged -FilePath $settings.ResticPath -Arguments $backupArguments -OutputPath $resticLog
 
@@ -128,7 +141,11 @@ try {
         # restic saved a snapshot but skipped what it could not read. That is not a backup you can
         # trust blindly, so the run fails, and says exactly which items to exclude or fix.
         $shown = @($backup.Unreadable | Select-Object -First 5) -join '; '
-        throw "Snapshot $currentSnapshotId was saved, but restic could not read $unreadableCount item(s): $shown. Exclude them in config\excludes.txt or fix their permissions. Full list in $resticLog"
+        $hint = ''
+        if ($script:OnMac -and $shown -match 'operation not permitted') {
+            $hint = ' macOS keeps Desktop, Documents and Downloads private even from root: give Full Disk Access to restic-twin (see troubleshooting).'
+        }
+        throw "Snapshot $currentSnapshotId was saved, but restic could not read $unreadableCount item(s): $shown. Exclude them in $(Show-Path 'config\excludes.txt') or fix their permissions.$hint Full list in $resticLog"
     }
     if ($resticExitCode -ne 0) {
         throw "restic backup failed with exit code $resticExitCode. See $resticLog"
@@ -147,7 +164,7 @@ try {
     Write-Utf8NoBom -Path $statePath -Content ($currentSnapshotId + "`n")
 
     if (-not $SkipMirror) {
-        $robocopyExitCode = Update-Mirror -Settings $settings -LogPath (Join-Path $settings.LogsPath "robocopy_$runId.log")
+        $mirrorExitCode = Update-Mirror -Settings $settings -LogPath (Join-Path $settings.LogsPath "$($script:MirrorTool)_$runId.log")
     }
     if (-not $SkipMaintenance) {
         Invoke-Maintenance
@@ -162,7 +179,7 @@ catch {
     $inner = $_.Exception
     while ($inner.InnerException) { $inner = $inner.InnerException }
     if ($inner -is [UnauthorizedAccessException] -and -not (Test-IsAdministrator)) {
-        $errorMessage += ' Once the tasks are installed only SYSTEM and Administrators can write to the backup folders: run it from an elevated PowerShell.'
+        $errorMessage += " Once the scheduled jobs are installed only they and administrators can write to the backup folders: $($script:ElevationHint)."
     }
     try { Write-Log -Level ERROR -Message $errorMessage } catch { [Console]::Error.WriteLine($errorMessage) }
 }
@@ -172,7 +189,7 @@ finally {
         try {
             $record = [ordered]@{
                 run_id             = $runId
-                execution_identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+                execution_identity = Get-ExecutionIdentity
                 started_at         = $startedAt.ToString('o')
                 finished_at        = $finishedAt.ToString('o')
                 duration_seconds   = [Math]::Round(($finishedAt - $startedAt).TotalSeconds, 3)
@@ -182,9 +199,11 @@ finally {
                 current_snapshot   = $currentSnapshotId
                 restic_exit_code   = $resticExitCode
                 unreadable_items   = $unreadableCount
-                robocopy_exit_code = $robocopyExitCode
+                mirror_exit_code   = $mirrorExitCode
                 error              = $errorMessage
             }
+            # The name 1.0 wrote, kept for whatever already reads it.
+            if ($script:OnWindows) { $record.robocopy_exit_code = $mirrorExitCode }
             Add-Utf8Line -Path (Join-Path $settings.LogsPath 'runs.jsonl') -Line ($record | ConvertTo-Json -Compress)
             Write-Utf8NoBom -Path (Join-Path $settings.LogsPath 'latest.json') -Content (($record | ConvertTo-Json) + "`n")
         }

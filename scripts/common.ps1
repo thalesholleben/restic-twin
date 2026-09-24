@@ -1,11 +1,16 @@
 Set-StrictMode -Version Latest
 
-# Shared by every script in this folder. Keep it compatible with Windows PowerShell 5.1:
-# no ternary, no ??, no pipeline chain operators, ASCII only (5.1 reads BOM-less files as ANSI).
+# Shared by every script in this folder, on both platforms. What differs lives in windows.ps1 and
+# macos.ps1, which define the same functions. Keep everything compatible with Windows PowerShell
+# 5.1: no ternary, no ??, no pipeline chain operators, ASCII only (5.1 reads BOM-less files as ANSI).
+
+$script:OnWindows = ($PSVersionTable.PSEdition -eq 'Desktop') -or ((Test-Path variable:IsWindows) -and $IsWindows)
+$script:OnMac = (-not $script:OnWindows) -and (Test-Path variable:IsMacOS) -and $IsMacOS
+if ($script:OnWindows) { . (Join-Path $PSScriptRoot 'windows.ps1') }
+elseif ($script:OnMac) { . (Join-Path $PSScriptRoot 'macos.ps1') }
+else { throw 'restic-twin runs on Windows and macOS.' }
 
 $script:ResticTag = 'restic-twin'
-$script:DailyTaskName = 'restic-twin daily backup'
-$script:HotCopyTaskName = 'restic-twin hot copies'
 $script:MirrorMarkerName = '.restic-twin-mirror'
 $script:HotCopyVersionPattern = '^\d{4}-\d{2}-\d{2}_\d{6}(-\d+)?$'
 $script:AllowedSettings = @('SourcePath', 'DestinationRoot', 'PasswordFile', 'DailyAt', 'KeepDaily', 'KeepMonthly', 'MinimumFreeSpaceGB', 'HotCopyEveryMinutes', 'HotCopies')
@@ -27,18 +32,6 @@ function Get-BackupProjectRoot {
     return (Split-Path -Parent $PSScriptRoot)
 }
 
-function Get-InstallRoot {
-    # The daily task runs as SYSTEM, so the code it runs has to live where a normal user cannot
-    # change it. A clone in your profile is writable by you and by anything running as you.
-    return (Join-Path $env:ProgramFiles 'restic-twin')
-}
-
-function Test-IsAdministrator {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
 function Write-Utf8NoBom {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -52,7 +45,7 @@ function Add-Utf8Line {
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Line
     )
-    [IO.File]::AppendAllText($Path, $Line + "`r`n", (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::AppendAllText($Path, $Line + [Environment]::NewLine, (New-Object Text.UTF8Encoding($false)))
 }
 
 function Write-Log {
@@ -79,39 +72,35 @@ function Enable-Utf8NativeOutput {
     }
 }
 
+function Show-Path {
+    # A path inside a message, written the way this platform writes it.
+    param([Parameter(Mandatory = $true)][string]$Relative)
+    return $Relative.Replace('\', [IO.Path]::DirectorySeparatorChar)
+}
+
 # ---------------------------------------------------------------------------------------------
 # Settings
-
-function Test-AbsoluteLocalPath {
-    param([AllowNull()][object]$Value)
-    if ($Value -isnot [string] -or $Value -notmatch '^[A-Za-z]:\\') { return $false }
-    try {
-        [void][IO.Path]::GetFullPath($Value)
-        return $true
-    }
-    catch {
-        return $false
-    }
-}
 
 function ConvertTo-NormalizedPath {
     param([Parameter(Mandatory = $true)][string]$Path)
     $full = [IO.Path]::GetFullPath($Path)
     $root = [IO.Path]::GetPathRoot($full)
     if ($full.Length -gt $root.Length) {
-        $full = $full.TrimEnd('\')
+        $full = $full.TrimEnd([IO.Path]::DirectorySeparatorChar)
     }
     return $full
 }
 
 function Test-PathInside {
-    # True when $Path is $Parent itself or anything below it. Windows paths ignore case.
+    # True when $Path is $Parent itself or anything below it. Case is ignored: Windows ignores it,
+    # and so does the default APFS; on a case-sensitive volume this only errs on the safe side.
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$Parent
     )
     if ($Path.Equals($Parent, [StringComparison]::OrdinalIgnoreCase)) { return $true }
-    $prefix = $Parent.TrimEnd('\') + '\'
+    $separator = [IO.Path]::DirectorySeparatorChar
+    $prefix = $Parent.TrimEnd($separator) + $separator
     return $Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
 }
 
@@ -153,7 +142,7 @@ function Resolve-BackupSettings {
             $pathsValid = $false
         }
         elseif (-not (Test-AbsoluteLocalPath $s[$key])) {
-            $problems.Add("$key must be an absolute path on a drive letter, like 'E:\restic-twin': '$($s[$key])'.")
+            $problems.Add("$key must be an absolute path, like '$($script:PathExample)': '$($s[$key])'.")
             $pathsValid = $false
         }
         else {
@@ -174,7 +163,7 @@ function Resolve-BackupSettings {
             $s.PasswordFile = [IO.Path]::Combine($s.RecoveryPath, 'restic-password.txt')
         }
         if (-not (Test-AbsoluteLocalPath $s.PasswordFile)) {
-            $problems.Add("PasswordFile must be an absolute path on a drive letter: '$($s.PasswordFile)'.")
+            $problems.Add("PasswordFile must be an absolute path: '$($s.PasswordFile)'.")
         }
         else {
             $s.PasswordFile = ConvertTo-NormalizedPath $s.PasswordFile
@@ -204,7 +193,7 @@ function Resolve-BackupSettings {
     $sets = New-Object Collections.Generic.List[hashtable]
     foreach ($set in @($s.HotCopies)) {
         if ($set -isnot [hashtable]) {
-            $problems.Add("Each HotCopies entry must look like @{ Name = 'notes'; Files = @('C:\path\file.txt') }.")
+            $problems.Add("Each HotCopies entry must look like @{ Name = 'notes'; Files = @('<full path of a file>') }.")
             continue
         }
         foreach ($key in $set.Keys) {
@@ -228,7 +217,7 @@ function Resolve-BackupSettings {
         else {
             foreach ($file in @($set['Files'])) {
                 if (-not (Test-AbsoluteLocalPath $file)) {
-                    $problems.Add("HotCopies '$name': '$file' is not an absolute path on a drive letter.")
+                    $problems.Add("HotCopies '$name': '$file' is not an absolute path.")
                     continue
                 }
                 $normalized = ConvertTo-NormalizedPath $file
@@ -259,7 +248,7 @@ function Resolve-BackupSettings {
 function Read-SettingsFile {
     # What Import-PowerShellDataFile does (parse, then evaluate constants only, no code runs),
     # except the text is read as UTF-8: Windows PowerShell 5.1 reads a file without BOM as ANSI,
-    # and a path like C:\Users\<name with an accent> would arrive broken.
+    # and a path with an accent, like a user folder, would arrive broken.
     param([Parameter(Mandatory = $true)][string]$Path)
     $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseInput([IO.File]::ReadAllText($Path), $Path, [ref]$null, [ref]$errors)
@@ -283,25 +272,27 @@ function Get-BackupSettings {
 
     $projectRoot = Get-BackupProjectRoot
     if (-not $ConfigPath) {
-        $ConfigPath = Join-Path $projectRoot 'config\settings.psd1'
+        $ConfigPath = [IO.Path]::Combine($projectRoot, 'config', 'settings.psd1')
     }
     if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
-        throw "Settings not found: $ConfigPath. Copy config\settings.example.psd1 to config\settings.psd1 and set SourcePath and DestinationRoot."
+        $example = 'settings.example.psd1'
+        if ($script:OnMac) { $example = 'settings.example.macos.psd1' }
+        throw "Settings not found: $ConfigPath. Copy $(Show-Path "config\$example") to $(Show-Path 'config\settings.psd1') and set SourcePath and DestinationRoot."
     }
     $ConfigPath = (Resolve-Path -LiteralPath $ConfigPath).ProviderPath
     $settings = Resolve-BackupSettings -Raw (Read-SettingsFile -Path $ConfigPath)
     $configFolder = Split-Path -Parent $ConfigPath
     $settings.ConfigPath = $ConfigPath
     $settings.ProjectRoot = $projectRoot
-    $settings.ResticPath = Join-Path $projectRoot 'bin\restic.exe'
+    $settings.ResticPath = [IO.Path]::Combine($projectRoot, 'bin', $script:ResticFileName)
     $settings.ExcludesPath = Join-Path $configFolder 'excludes.txt'
     $settings.MirrorExcludesPath = Join-Path $configFolder 'excludes-mirror.txt'
     return $settings
 }
 
 function Get-ExcludePatterns {
-    # restic and robocopy both read these names. They agree on names and wildcards, not on paths,
-    # so a line with a slash would mean one thing to the snapshot and another to the mirror.
+    # restic and the mirror copy (robocopy, rsync) all read these names. They agree on names and
+    # wildcards, not on paths, so a line with a slash would mean one thing to each of them.
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
     $number = 0
@@ -310,7 +301,7 @@ function Get-ExcludePatterns {
         $pattern = $line.Trim()
         if (-not $pattern -or $pattern.StartsWith('#')) { continue }
         if ($pattern.Contains('\') -or $pattern.Contains('/')) {
-            throw "$Path line ${number}: '$pattern' is a path. Use a file or folder name, wildcards allowed, because restic and robocopy read paths differently."
+            throw "$Path line ${number}: '$pattern' is a path. Use a file or folder name, wildcards allowed, because restic and the mirror copy read paths differently."
         }
         $pattern
     }
@@ -325,11 +316,10 @@ function Get-ResticExcludeLines {
         [Parameter(Mandatory = $true)][string]$SourcePath,
         [AllowEmptyCollection()][string[]]$Patterns = @()
     )
-    # "[" opens a character class in restic's patterns; "[[]" is a literal one. "]" alone is
-    # already literal, and "*" and "?" cannot appear in a Windows path.
-    $root = $SourcePath.TrimEnd('\').Replace('[', '[[]')
+    $root = ConvertTo-ResticPatternRoot -SourcePath $SourcePath
+    $separator = [IO.Path]::DirectorySeparatorChar
     foreach ($pattern in $Patterns) {
-        "$root\**\$pattern"
+        $root + $separator + '**' + $separator + $pattern
     }
 }
 
@@ -351,44 +341,6 @@ function Get-RunLockName {
         $sha.Dispose()
     }
     return $Kind + '-' + (-join ($digest[0..7] | ForEach-Object { $_.ToString('x2') }))
-}
-
-function Enter-RunLock {
-    # Global\ and not Local\: the scheduled run lives in session 0 as SYSTEM, a manual run lives in
-    # your session, and a Local\ mutex would let both refresh the mirror at the same time.
-    param([Parameter(Mandatory = $true)][string]$Name)
-    try {
-        $mutex = New-Object Threading.Mutex($false, "Global\restic-twin-$Name")
-    }
-    catch {
-        $inner = $_.Exception
-        while ($inner.InnerException) { $inner = $inner.InnerException }
-        # Another account (the SYSTEM task) holds it and we may not even open it: that is busy.
-        if ($inner -is [UnauthorizedAccessException]) { return $null }
-        throw
-    }
-    try {
-        $acquired = $mutex.WaitOne(0)
-    }
-    catch {
-        $inner = $_.Exception
-        while ($inner.InnerException) { $inner = $inner.InnerException }
-        # The previous holder died without releasing it; we own it now.
-        if ($inner -isnot [Threading.AbandonedMutexException]) { $mutex.Dispose(); throw }
-        $acquired = $true
-    }
-    if (-not $acquired) {
-        $mutex.Dispose()
-        return $null
-    }
-    return $mutex
-}
-
-function Exit-RunLock {
-    param([AllowNull()][object]$Lock)
-    if ($null -eq $Lock) { return }
-    try { $Lock.ReleaseMutex() } catch { }
-    $Lock.Dispose()
 }
 
 function Invoke-NativeCapture {
@@ -436,7 +388,7 @@ function Get-ResticBaseArguments {
         [Parameter(Mandatory = $true)][hashtable]$Settings,
         [switch]$ReadOnly
     )
-    $arguments = @('--repo', $Settings.RepositoryPath, '--password-file', $Settings.PasswordFile)
+    $arguments = @('--repo', $Settings.RepositoryPath, '--password-file', $Settings.PasswordFile) + @(Get-ResticCacheArguments)
     if ($ReadOnly -and -not (Test-IsAdministrator)) {
         # Once the tasks are installed your account only reads the history, so restic cannot write
         # its lock file there. Reading without it is fine; a prune running at the same moment could
@@ -512,15 +464,18 @@ function ConvertTo-ChangeAction {
 }
 
 function Get-RelativeSnapshotPath {
-    # restic writes C:\Users\you\Projects\a.txt as /C/Users/you/Projects/a.txt. Returns the part
-    # after the source folder, '(root)' for the folder itself, or $null for anything outside it.
+    # restic writes C:\Users\you\Projects\a.txt as /C/Users/you/Projects/a.txt, and a macOS path
+    # as it is. Returns the part after the source folder, '(root)' for the folder itself, or $null
+    # for anything outside it.
     param(
         [Parameter(Mandatory = $true)][string]$SnapshotPath,
         [Parameter(Mandatory = $true)][string]$SourcePath
     )
     $path = $SnapshotPath.Replace('\', '/').Trim()
     $source = $SourcePath.Replace('\', '/').TrimEnd('/')
-    foreach ($candidate in @(('/' + $source.Replace(':', '')), ('/' + $source), $source)) {
+    $candidates = @($source)
+    if ($source -match '^[A-Za-z]:') { $candidates = @(('/' + $source.Replace(':', '')), ('/' + $source), $source) }
+    foreach ($candidate in $candidates) {
         if ($path.Equals($candidate, [StringComparison]::OrdinalIgnoreCase) -or $path.Equals($candidate + '/', [StringComparison]::OrdinalIgnoreCase)) {
             return '(root)'
         }
@@ -529,6 +484,15 @@ function Get-RelativeSnapshotPath {
         }
     }
     return $null
+}
+
+function ConvertTo-SnapshotPath {
+    # How restic names a local path inside a snapshot: C:\Users\you\Projects is
+    # /C/Users/you/Projects, and a macOS path stays as it is.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $unix = $Path.Replace('\', '/').TrimEnd('/')
+    if ($unix -match '^([A-Za-z]):(.*)$') { return '/' + $Matches[1] + $Matches[2] }
+    return $unix
 }
 
 function ConvertFrom-ResticDiff {
@@ -715,8 +679,9 @@ function New-ChangeReport {
 # Mirror
 
 function Assert-MirrorTarget {
-    # robocopy /MIR deletes whatever the destination has and the source does not. It only ever
-    # runs into a folder that is empty or carries our marker naming this very source.
+    # The mirror copy (robocopy /MIR, rsync --delete) deletes whatever the destination has and the
+    # source does not. It only ever runs into a folder that is empty or carries our marker naming
+    # this very source.
     param(
         [Parameter(Mandatory = $true)][string]$MirrorPath,
         [Parameter(Mandatory = $true)][string]$SourcePath
@@ -732,37 +697,12 @@ function Assert-MirrorTarget {
     # Never created here: install.ps1 creates every managed folder with its permissions, and a folder
     # made here would inherit the drive's, which usually let every local account read a plain copy.
     if (-not (Test-Path -LiteralPath $MirrorPath -PathType Container)) {
-        throw "The mirror folder $MirrorPath is missing. Run scripts\install.ps1 again: it creates it with the right permissions."
+        throw "The mirror folder $MirrorPath is missing. Run $(Show-Path 'scripts\install.ps1') again: it creates it with the right permissions."
     }
     if (@(Get-ChildItem -LiteralPath $MirrorPath -Force | Select-Object -First 1).Count -gt 0) {
         throw "$MirrorPath already holds files that restic-twin did not put there, and the mirror refresh deletes anything that is not in the source. Empty that folder or choose another DestinationRoot."
     }
     Write-Utf8NoBom -Path $marker -Content ($SourcePath + "`n")
-}
-
-function Get-MirrorArguments {
-    param(
-        [Parameter(Mandatory = $true)][hashtable]$Settings,
-        [AllowEmptyCollection()][string[]]$Exclusions = @(),
-        [Parameter(Mandatory = $true)][string]$LogPath
-    )
-    # /UNILOG writes the log as UTF-16 itself, so no code page ever touches robocopy's paths.
-    $arguments = @(
-        $Settings.SourcePath, $Settings.MirrorPath,
-        '/MIR', '/COPY:DAT', '/DCOPY:DAT', '/Z', '/SL', '/XJ',
-        '/R:3', '/W:5', '/MT:16', '/NP', '/BYTES', '/NFL', '/NDL',
-        "/UNILOG:$LogPath"
-    )
-    if ($Exclusions.Count -gt 0) { $arguments += @('/XD') + $Exclusions }
-    # The marker is excluded, and robocopy never purges what it excludes, so /MIR keeps it.
-    $arguments += @('/XF', $script:MirrorMarkerName) + $Exclusions
-    return $arguments
-}
-
-function Get-RobocopyErrorLines {
-    # The error text is localized ("ERROR 5", "ERRO 5", "FEHLER 5"), the hex code is not.
-    param([AllowEmptyCollection()][string[]]$Lines)
-    @($Lines | Where-Object { $_ -match '\(0x[0-9A-Fa-f]{8}\)' } | Select-Object -First 3 | ForEach-Object { $_.Trim() })
 }
 
 function Update-Mirror {
@@ -773,22 +713,9 @@ function Update-Mirror {
     Assert-MirrorTarget -MirrorPath $Settings.MirrorPath -SourcePath $Settings.SourcePath
     $exclusions = @(Get-ExcludePatterns -Path $Settings.ExcludesPath) + @(Get-ExcludePatterns -Path $Settings.MirrorExcludesPath)
     Write-Log -Message "Refreshing the mirror in $($Settings.MirrorPath)."
-    $result = Invoke-NativeCapture -FilePath 'robocopy.exe' -Arguments (Get-MirrorArguments -Settings $Settings -Exclusions $exclusions -LogPath $LogPath)
-    if ($result.ExitCode -ge 8) {
-        $logLines = @()
-        if (Test-Path -LiteralPath $LogPath -PathType Leaf) { $logLines = [IO.File]::ReadAllLines($LogPath) }
-        $detail = @(Get-RobocopyErrorLines -Lines (@($logLines) + @($result.StdOut) + @($result.StdErr)))
-        $hint = ''
-        if (@($detail | Where-Object { $_ -match '\(0x00000005\)' }).Count -gt 0) {
-            $hint += ' Access denied usually means a file only your account can read. The snapshot still has it (restic reads it with backup privileges); list its name in config\excludes-mirror.txt.'
-        }
-        if (@($detail | Where-Object { $_ -match '\(0x00000020\)' }).Count -gt 0) {
-            $hint += ' A program keeps that file open. The snapshot still has it (restic reads it through VSS); if it is always open, like a database or a VM disk, list its name in config\excludes-mirror.txt.'
-        }
-        throw "Robocopy failed with exit code $($result.ExitCode): $($detail -join ' | ').$hint See $LogPath"
-    }
-    Write-Log -Message "Mirror refreshed; robocopy exit code $($result.ExitCode)."
-    return $result.ExitCode
+    $code = Invoke-MirrorCopy -Settings $Settings -Exclusions $exclusions -LogPath $LogPath
+    Write-Log -Message "Mirror refreshed; exit code $code."
+    return $code
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -859,146 +786,91 @@ function Invoke-HotCopySet {
 }
 
 # ---------------------------------------------------------------------------------------------
-# Install helpers
+# Run history
 
-function Set-PrivateFolderAcl {
-    # The mirror is a plain copy of your files. On a second drive it would otherwise inherit that
-    # drive's permissions, which usually let every local account read it.
-    #
-    # -UserAccess Read is for the folders the SYSTEM task writes once it is installed: a folder you
-    # can write is one where anything running as you could swap a file SYSTEM reads back, or turn
-    # the folder into a junction that makes SYSTEM write somewhere else. It is also what keeps
-    # ransomware running as you away from the history. -Owner hands the folder, and whatever is
-    # below it, to Administrators, because an owner can always rewrite the permissions.
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [ValidateSet('Full', 'Read')][string]$UserAccess = 'Full',
-        [switch]$Owner
-    )
-    if ($Owner) {
-        $ErrorActionPreference = 'Continue'
-        $null = & icacls.exe $Path /setowner '*S-1-5-32-544' /T /C /Q 2>&1
-        if ($LASTEXITCODE -ne 0) { throw "Could not give $Path to Administrators (icacls exit code $LASTEXITCODE)." }
-        $ErrorActionPreference = 'Stop'
-    }
-    $userRights = 'FullControl'
-    if ($UserAccess -eq 'Read') { $userRights = 'ReadAndExecute, Synchronize' }
-    Set-ExactAcl -Path $Path -Directory -Rights @{
-        'S-1-5-18'     = 'FullControl'
-        'S-1-5-32-544' = 'FullControl'
-        ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) = $userRights
-    }
+function ConvertTo-DateTimeOffset {
+    # PowerShell 7 turns ISO dates in JSON into DateTime by itself, 5.1 leaves them as text.
+    param([AllowNull()][object]$Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [datetime]) { return [DateTimeOffset]$Value }
+    try { return [DateTimeOffset]::Parse([string]$Value, [Globalization.CultureInfo]::InvariantCulture) } catch { return $null }
 }
 
-function Set-ExactAcl {
-    # Writes the whole access list in one call. icacls /grant:r only replaces the entries of the
-    # accounts it names, so an explicit "Everyone: read" someone added earlier would survive it.
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][hashtable]$Rights,
-        [switch]$Directory
-    )
-    if ($Directory) {
-        $acl = New-Object Security.AccessControl.DirectorySecurity
-        $info = New-Object IO.DirectoryInfo($Path)
-        $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+function Get-RunHistory {
+    # The last successful run and the last attempt, from logs\runs.jsonl.
+    param([Parameter(Mandatory = $true)][hashtable]$Settings)
+    $history = [pscustomobject]@{ Found = $false; LastSuccess = $null; LastAttempt = $null }
+    $path = [IO.Path]::Combine($Settings.LogsPath, 'runs.jsonl')
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $history }
+    $history.Found = $true
+    foreach ($line in [IO.File]::ReadAllLines($path)) {
+        if (-not $line.Trim()) { continue }
+        try { $run = $line | ConvertFrom-Json } catch { continue }
+        $started = ConvertTo-DateTimeOffset (Get-JsonProperty $run 'started_at')
+        if ($null -ne $started -and ($null -eq $history.LastAttempt -or $started -gt $history.LastAttempt)) { $history.LastAttempt = $started }
+        if ((Get-JsonProperty $run 'status') -ne 'success') { continue }
+        $finished = ConvertTo-DateTimeOffset (Get-JsonProperty $run 'finished_at')
+        if ($null -ne $finished -and ($null -eq $history.LastSuccess -or $finished -gt $history.LastSuccess)) { $history.LastSuccess = $finished }
     }
-    else {
-        $acl = New-Object Security.AccessControl.FileSecurity
-        $info = New-Object IO.FileInfo($Path)
-        $inherit = [Security.AccessControl.InheritanceFlags]::None
-    }
-    $acl.SetAccessRuleProtection($true, $false)
-    foreach ($sid in $Rights.Keys) {
-        $identity = New-Object Security.Principal.SecurityIdentifier($sid)
-        $rule = New-Object Security.AccessControl.FileSystemAccessRule($identity, [Security.AccessControl.FileSystemRights]$Rights[$sid], $inherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
-        $acl.AddAccessRule($rule)
-    }
-    # Not Set-Acl: in Windows PowerShell 5.1 it also tries to write the owner and the audit list of a
-    # folder that is already protected, and fails without the privileges for those. SetAccessControl
-    # writes only what changed here, the access list. It moved to an extension class in .NET Core.
-    if ($PSVersionTable.PSEdition -eq 'Core') {
-        [IO.FileSystemAclExtensions]::SetAccessControl($info, $acl)
-    }
-    else {
-        $info.SetAccessControl($acl)
-    }
+    return $history
 }
 
-function Test-PrivateFolderAcl {
-    # True when $Path already has exactly what Set-PrivateFolderAcl gives it, so an install can skip
-    # re-applying it, which on a mirror with a hundred thousand files takes a while.
+function Test-BackupDue {
+    # For a scheduler that starts the backup more often than daily, like launchd every hour: it is
+    # due when nothing succeeded since the most recent DailyAt, and the last attempt is at least four
+    # hours old, so a run that keeps failing retries a few times a day instead of every hour.
     param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [ValidateSet('Full', 'Read')][string]$UserAccess = 'Full',
-        [switch]$Owner
+        [Parameter(Mandatory = $true)][string]$DailyAt,
+        [AllowNull()][object]$LastSuccess,
+        [AllowNull()][object]$LastAttempt,
+        [DateTimeOffset]$Now = [DateTimeOffset]::Now
     )
-    $acl = Get-Acl -LiteralPath $Path
-    if (-not $acl.AreAccessRulesProtected) { return $false }
-    if ($Owner) {
-        $ownerSid = (New-Object Security.Principal.NTAccount($acl.Owner)).Translate([Security.Principal.SecurityIdentifier]).Value
-        if ($ownerSid -ne 'S-1-5-32-544' -and $ownerSid -ne 'S-1-5-18') { return $false }
-    }
-    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $full = [Security.AccessControl.FileSystemRights]::FullControl
-    $read = [Security.AccessControl.FileSystemRights]::ReadAndExecute -bor [Security.AccessControl.FileSystemRights]::Synchronize
-    $want = @{ 'S-1-5-18' = $full; 'S-1-5-32-544' = $full; $sid = $full }
-    if ($UserAccess -eq 'Read') { $want[$sid] = $read }
-    $rules = @($acl.Access | Where-Object { $_.AccessControlType -eq 'Allow' })
-    if ($rules.Count -ne $want.Count -or @($acl.Access | Where-Object { $_.AccessControlType -ne 'Allow' }).Count -gt 0) { return $false }
-    foreach ($rule in $rules) {
-        $ruleSid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
-        if (-not $want.ContainsKey($ruleSid) -or $rule.FileSystemRights -ne $want[$ruleSid]) { return $false }
-    }
+    $time = $DailyAt -split ':'
+    $mostRecent = New-Object DateTimeOffset($Now.Year, $Now.Month, $Now.Day, [int]$time[0], [int]$time[1], 0, $Now.Offset)
+    if ($Now -lt $mostRecent) { $mostRecent = $mostRecent.AddDays(-1) }
+    if ($null -ne $LastSuccess -and $LastSuccess -ge $mostRecent) { return $false }
+    if ($null -ne $LastAttempt -and ($Now - $LastAttempt).TotalHours -lt 4) { return $false }
     return $true
 }
 
-function Set-PasswordFileAcl {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    try {
-        Set-ExactAcl -Path $Path -Rights @{
-            'S-1-5-18'     = 'Read, Synchronize'
-            'S-1-5-32-544' = 'Read, Synchronize'
-            ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) = 'Read, Synchronize'
-        }
-        return $true
-    }
-    catch {
-        return $false
-    }
-}
+# ---------------------------------------------------------------------------------------------
+# Installed copy
 
-function Get-DiskNumber {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    try {
-        return (Get-Partition -DriveLetter ([IO.Path]::GetPathRoot($Path).Substring(0, 1)) -ErrorAction Stop).DiskNumber
+function Publish-InstalledCopy {
+    # What the scheduled jobs run: a copy of the scripts, the settings and restic, where only an
+    # administrator (Windows) or root (macOS) can change them.
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Settings,
+        [Parameter(Mandatory = $true)][string]$InstallRoot
+    )
+    if ($Settings.ProjectRoot.Equals($InstallRoot, [StringComparison]::OrdinalIgnoreCase)) { return }
+    foreach ($folder in @('scripts', 'config', 'bin')) {
+        New-Item -ItemType Directory -Path ([IO.Path]::Combine($InstallRoot, $folder)) -Force | Out-Null
     }
-    catch {
-        return $null
+    Get-ChildItem -LiteralPath ([IO.Path]::Combine($Settings.ProjectRoot, 'scripts')) -File |
+        Where-Object { @('.ps1', '.vbs') -contains $_.Extension } |
+        Copy-Item -Destination ([IO.Path]::Combine($InstallRoot, 'scripts')) -Force
+    Copy-Item -LiteralPath $Settings.ConfigPath -Destination ([IO.Path]::Combine($InstallRoot, 'config', 'settings.psd1')) -Force
+    foreach ($file in @($Settings.ExcludesPath, $Settings.MirrorExcludesPath)) {
+        if (Test-Path -LiteralPath $file -PathType Leaf) { Copy-Item -LiteralPath $file -Destination ([IO.Path]::Combine($InstallRoot, 'config')) -Force }
     }
-}
-
-function Get-TaskPowerShellPath {
-    # Only hosts installed for the whole machine: the daily task runs them as SYSTEM, and a
-    # per-user pwsh (Store, portable, a folder in your profile) is one a normal user can replace.
-    $pwsh = Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'
-    if (Test-Path -LiteralPath $pwsh -PathType Leaf) { return $pwsh }
-    return (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe')
+    Copy-Item -LiteralPath $Settings.ResticPath -Destination ([IO.Path]::Combine($InstallRoot, 'bin', $script:ResticFileName)) -Force
+    Protect-InstalledCopy -InstallRoot $InstallRoot
 }
 
 function Get-InstalledFileDifferences {
-    # Compares what the scheduled tasks run (the installed copy) with this folder and its settings.
+    # Compares what the scheduled jobs run (the installed copy) with this folder and its settings.
     param([Parameter(Mandatory = $true)][hashtable]$Settings)
     $installRoot = Get-InstallRoot
     $pairs = @()
-    foreach ($file in @(Get-ChildItem -LiteralPath (Join-Path $Settings.ProjectRoot 'scripts') -File | Where-Object { $_.Extension -in '.ps1', '.vbs' })) {
-        $pairs += , @($file.FullName, (Join-Path $installRoot ('scripts\' + $file.Name)))
+    foreach ($file in @(Get-ChildItem -LiteralPath ([IO.Path]::Combine($Settings.ProjectRoot, 'scripts')) -File | Where-Object { @('.ps1', '.vbs') -contains $_.Extension })) {
+        $pairs += , @($file.FullName, [IO.Path]::Combine($installRoot, 'scripts', $file.Name))
     }
-    $pairs += , @($Settings.ConfigPath, (Join-Path $installRoot 'config\settings.psd1'))
+    $pairs += , @($Settings.ConfigPath, [IO.Path]::Combine($installRoot, 'config', 'settings.psd1'))
     foreach ($path in @($Settings.ExcludesPath, $Settings.MirrorExcludesPath)) {
-        $pairs += , @($path, (Join-Path $installRoot ('config\' + (Split-Path -Leaf $path))))
+        $pairs += , @($path, [IO.Path]::Combine($installRoot, 'config', (Split-Path -Leaf $path)))
     }
-    $pairs += , @($Settings.ResticPath, (Join-Path $installRoot 'bin\restic.exe'))
+    $pairs += , @($Settings.ResticPath, [IO.Path]::Combine($installRoot, 'bin', $script:ResticFileName))
     foreach ($pair in $pairs) {
         $here = Test-Path -LiteralPath $pair[0] -PathType Leaf
         $there = Test-Path -LiteralPath $pair[1] -PathType Leaf

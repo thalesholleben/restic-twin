@@ -11,13 +11,17 @@ permissions:
 
 jobs:
   test:
-    name: Tests (${{ matrix.shell }})
-    runs-on: windows-latest
+    name: Tests (${{ matrix.os }}, ${{ matrix.shell }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # pwsh is PowerShell 7; powershell is the Windows PowerShell 5.1 every Windows ships with.
-        shell: [pwsh, powershell]
+        include:
+          # pwsh is PowerShell 7; powershell is the Windows PowerShell 5.1 every Windows ships with.
+          - { os: windows-latest, shell: pwsh }
+          - { os: windows-latest, shell: powershell }
+          # macOS support is beta: this runner is the only Mac the tests run on.
+          - { os: macos-latest, shell: pwsh }
     defaults:
       run:
         shell: ${{ matrix.shell }}
@@ -30,7 +34,7 @@ jobs:
           Install-Module Pester -RequiredVersion 5.9.1 -Scope CurrentUser -Force -SkipPublisherCheck
 
       - name: restic, pinned and checksum-verified
-        run: .\scripts\install-restic.ps1
+        run: ./scripts/install-restic.ps1
 
       - name: Tests
         run: |
@@ -43,14 +47,14 @@ jobs:
 
       - name: Nothing downloaded or personal is committed
         run: |
-          foreach ($path in @('bin/restic.exe', 'bin/version.txt', 'config/settings.psd1')) {
+          foreach ($path in @('bin/restic.exe', 'bin/restic', 'bin/version.txt', 'config/settings.psd1')) {
             if (git ls-files $path) { throw "$path must never be committed" }
           }
 
   system-install:
     # The path users run: install for real, the daily task as SYSTEM with VSS, then uninstall.
     # Only on a throwaway runner, never on a machine anyone cares about.
-    name: Install and run as SYSTEM
+    name: Install and run as SYSTEM (Windows)
     runs-on: windows-latest
     needs: test
     steps:
@@ -58,8 +62,25 @@ jobs:
 
       - name: restic, pinned and checksum-verified
         shell: pwsh
-        run: .\scripts\install-restic.ps1
+        run: ./scripts/install-restic.ps1
 
       - name: Install, run the daily task, uninstall
         shell: pwsh
-        run: .\tests\ci-system-install.ps1
+        run: ./tests/ci-system-install.ps1
+
+  system-install-macos:
+    # The same on macOS: install with sudo, the daily job as root under launchd on a disk image
+    # mounted in /Volumes, the drive going away, then uninstall. Throwaway runner only.
+    name: Install and run as root (macOS)
+    runs-on: macos-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: restic, pinned and checksum-verified
+        shell: pwsh
+        run: ./scripts/install-restic.ps1
+
+      - name: Install, run the daily job, uninstall
+        # sudo drops the environment; GITHUB_ACTIONS is what lets the script run at all.
+        run: sudo --preserve-env=GITHUB_ACTIONS "$(command -v pwsh)" -NoLogo -NoProfile -File tests/ci-system-install-macos.ps1

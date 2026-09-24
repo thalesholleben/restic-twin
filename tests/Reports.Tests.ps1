@@ -1,7 +1,20 @@
+BeforeDiscovery {
+    . ([IO.Path]::Combine($PSScriptRoot, 'TestHelpers.ps1'))
+}
+
 BeforeAll {
-    . (Join-Path $PSScriptRoot '..\scripts\common.ps1')
-    . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
-    $script:Source = 'C:\Users\you\Projects'
+    . ([IO.Path]::Combine($PSScriptRoot, '..', 'scripts', 'common.ps1'))
+    . ([IO.Path]::Combine($PSScriptRoot, 'TestHelpers.ps1'))
+    # How restic names the same source folder inside a snapshot, on each platform.
+    if ($script:OnWindowsTest) {
+        $script:Source = 'C:\Users\you\Projects'
+        $script:SnapRoot = '/C/Users/you/Projects'
+    }
+    else {
+        $script:Source = '/Users/you/Projects'
+        $script:SnapRoot = '/Users/you/Projects'
+    }
+    $script:SnapParent = $script:SnapRoot.Substring(0, $script:SnapRoot.LastIndexOf('/') + 1)
     $script:When = [datetime]'2026-09-23T19:00:00'
     $script:Accented = 'relat' + [char]0x00F3 + 'rio-' + [char]0x00E7 + [char]0x00E3 + 'o.md'
 }
@@ -21,22 +34,36 @@ Describe 'ConvertTo-ChangeAction' {
     }
 }
 
+Describe 'ConvertTo-SnapshotPath' {
+    It 'writes <Path> as <Expected>' -ForEach @(
+        @{ Path = 'C:\Users\you\Projects'; Expected = '/C/Users/you/Projects' }
+        @{ Path = 'D:\'; Expected = '/D' }
+        @{ Path = '/Users/you/Projects'; Expected = '/Users/you/Projects' }
+        @{ Path = '/Volumes/Backup/work/'; Expected = '/Volumes/Backup/work' }
+    ) {
+        ConvertTo-SnapshotPath -Path $Path | Should -Be $Expected
+    }
+}
+
 Describe 'Get-RelativeSnapshotPath' {
     It 'strips the source folder in the form restic writes it' {
-        Get-RelativeSnapshotPath -SnapshotPath '/C/Users/you/Projects/app/src/main.ts' -SourcePath $script:Source | Should -Be 'app/src/main.ts'
+        Get-RelativeSnapshotPath -SnapshotPath "$script:SnapRoot/app/src/main.ts" -SourcePath $script:Source | Should -Be 'app/src/main.ts'
     }
-    It 'accepts the other spellings and ignores case' {
+    It 'accepts the other Windows spellings and ignores case' -Skip:(-not $script:OnWindowsTest) {
         Get-RelativeSnapshotPath -SnapshotPath '/C:/Users/you/Projects/a.txt' -SourcePath $script:Source | Should -Be 'a.txt'
         Get-RelativeSnapshotPath -SnapshotPath 'c:/users/YOU/projects/a.txt' -SourcePath $script:Source | Should -Be 'a.txt'
     }
+    It 'ignores case, as the default APFS does' -Skip:$script:OnWindowsTest {
+        Get-RelativeSnapshotPath -SnapshotPath '/users/YOU/projects/a.txt' -SourcePath $script:Source | Should -Be 'a.txt'
+    }
     It 'names the source folder itself (root)' {
-        Get-RelativeSnapshotPath -SnapshotPath '/C/Users/you/Projects/' -SourcePath $script:Source | Should -Be '(root)'
+        Get-RelativeSnapshotPath -SnapshotPath "$script:SnapRoot/" -SourcePath $script:Source | Should -Be '(root)'
     }
     It 'returns nothing for the parents of the source and for a sibling with a longer name' {
-        Get-RelativeSnapshotPath -SnapshotPath '/C/Users/you/' -SourcePath $script:Source | Should -BeNullOrEmpty
-        Get-RelativeSnapshotPath -SnapshotPath '/C/Users/you/Projects2/a.txt' -SourcePath $script:Source | Should -BeNullOrEmpty
+        Get-RelativeSnapshotPath -SnapshotPath $script:SnapParent -SourcePath $script:Source | Should -BeNullOrEmpty
+        Get-RelativeSnapshotPath -SnapshotPath "${script:SnapRoot}2/a.txt" -SourcePath $script:Source | Should -BeNullOrEmpty
     }
-    It 'works when the source is a whole drive' {
+    It 'works when the source is a whole drive' -Skip:(-not $script:OnWindowsTest) {
         Get-RelativeSnapshotPath -SnapshotPath '/D/work/a.txt' -SourcePath 'D:\' | Should -Be 'work/a.txt'
     }
 }
@@ -44,12 +71,12 @@ Describe 'Get-RelativeSnapshotPath' {
 Describe 'ConvertFrom-ResticDiff' {
     BeforeAll {
         $lines = @(
-            '{"message_type":"change","path":"/C/Users/you/Projects/app/","modifier":"U"}'
-            '{"message_type":"change","path":"/C/Users/you/Projects/app/new.ts","modifier":"+"}'
-            '{"message_type":"change","path":"/C/Users/you/Projects/app/old.ts","modifier":"-"}'
-            '{"message_type":"change","path":"/C/Users/you/Projects/docs/' + $script:Accented + '","modifier":"M"}'
-            '{"message_type":"change","path":"/C/Users/you/Projects/assets/","modifier":"+"}'
-            '{"message_type":"change","path":"/C/Users/you/","modifier":"U"}'
+            '{"message_type":"change","path":"' + $script:SnapRoot + '/app/","modifier":"U"}'
+            '{"message_type":"change","path":"' + $script:SnapRoot + '/app/new.ts","modifier":"+"}'
+            '{"message_type":"change","path":"' + $script:SnapRoot + '/app/old.ts","modifier":"-"}'
+            '{"message_type":"change","path":"' + $script:SnapRoot + '/docs/' + $script:Accented + '","modifier":"M"}'
+            '{"message_type":"change","path":"' + $script:SnapRoot + '/assets/","modifier":"+"}'
+            '{"message_type":"change","path":"' + $script:SnapParent + '","modifier":"U"}'
             ''
             '{"message_type":"statistics","added":{"bytes":2048},"removed":{"bytes":1024}}'
         )
@@ -77,7 +104,7 @@ Describe 'ConvertFrom-ResticDiff' {
 
 Describe 'Write-ChangeCsv' {
     It 'writes UTF-8 with BOM so a spreadsheet keeps the accents' {
-        $path = Join-Path $TestDrive 'a.csv'
+        $path = Join-TestPath $TestDrive 'a.csv'
         $change = [pscustomobject][ordered]@{ backup_time = 't'; previous_snapshot = 'p'; current_snapshot = 'c'; modifier = 'M'; action = 'modified'; path = 'docs/' + $script:Accented; extension = '.md'; area = 'docs' }
         Write-ChangeCsv -Changes @($change) -Path $path
         $bytes = [IO.File]::ReadAllBytes($path)
@@ -85,7 +112,7 @@ Describe 'Write-ChangeCsv' {
         [IO.File]::ReadAllText($path) | Should -BeLike ('*docs/' + $script:Accented + '*')
     }
     It 'neutralizes a file name that a spreadsheet would run as a formula' {
-        $path = Join-Path $TestDrive 'b.csv'
+        $path = Join-TestPath $TestDrive 'b.csv'
         $change = [pscustomobject][ordered]@{ backup_time = 't'; previous_snapshot = 'p'; current_snapshot = 'c'; modifier = '+'; action = 'added'; path = '=HYPERLINK("http://x")'; extension = ''; area = '=HYPERLINK("http://x")' }
         Write-ChangeCsv -Changes @($change) -Path $path
         $row = @(Import-Csv -LiteralPath $path)[0]
@@ -93,7 +120,7 @@ Describe 'Write-ChangeCsv' {
         $row.area | Should -Be "'=HYPERLINK(`"http://x`")"
     }
     It 'writes only the header when nothing changed' {
-        $path = Join-Path $TestDrive 'c.csv'
+        $path = Join-TestPath $TestDrive 'c.csv'
         Write-ChangeCsv -Changes @() -Path $path
         @(Get-Content -LiteralPath $path).Count | Should -Be 1
         (Get-Content -LiteralPath $path -TotalCount 1) | Should -Be '"backup_time","previous_snapshot","current_snapshot","modifier","action","path","extension","area"'
@@ -134,7 +161,7 @@ Describe 'Read-ResticBackupLog' {
     }
 }
 
-Describe 'Get-RobocopyErrorLines' {
+Describe 'Get-RobocopyErrorLines' -Skip:(-not $script:OnWindowsTest) {
     It 'finds errors in any language by the hex code' {
         $lines = @(
             '   Total    Copied   Skipped',
