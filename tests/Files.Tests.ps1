@@ -182,8 +182,6 @@ Describe 'Set-PrivateFolderAcl and Test-PrivateFolderAcl' {
         try {
             Test-PrivateFolderAcl -Path $folder -UserAccess Read | Should -BeTrue
             Test-PrivateFolderAcl -Path $folder -UserAccess Full | Should -BeFalse
-            { [IO.File]::WriteAllText((Join-Path $folder 'x.txt'), 'x') } | Should -Throw
-            @(Get-ChildItem -LiteralPath $folder).Count | Should -Be 0
         }
         finally {
             # Still the owner here, so the permissions can be given back before Pester cleans up.
@@ -191,6 +189,21 @@ Describe 'Set-PrivateFolderAcl and Test-PrivateFolderAcl' {
         }
         Test-PrivateFolderAcl -Path $folder -UserAccess Full | Should -BeTrue
         { [IO.File]::WriteAllText((Join-Path $folder 'x.txt'), 'x') } | Should -Not -Throw
+    }
+
+    # An elevated shell carries the Administrators group, which keeps full control on purpose: this
+    # is the check for everything else running as you (CI runners are elevated, so it skips there).
+    It 'stops your account from writing there, from a shell that is not elevated' -Skip:(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        $folder = Join-Path $TestDrive 'acl-read-write'
+        New-Item -ItemType Directory -Path $folder | Out-Null
+        Set-PrivateFolderAcl -Path $folder -UserAccess Read
+        try {
+            { [IO.File]::WriteAllText((Join-Path $folder 'x.txt'), 'x') } | Should -Throw
+            @(Get-ChildItem -LiteralPath $folder).Count | Should -Be 0
+        }
+        finally {
+            Set-PrivateFolderAcl -Path $folder -UserAccess Full
+        }
     }
 }
 
