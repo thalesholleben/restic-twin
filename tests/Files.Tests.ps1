@@ -230,6 +230,10 @@ Describe 'Set-PrivateFolderAcl and Test-PrivateFolderAcl on macOS' -Skip:$script
         New-Item -ItemType Directory -Path $folder | Out-Null
         $null = & /bin/chmod 777 $folder
         $null = & /bin/chmod +a 'group:everyone allow list,search' $folder
+        # Prove the adversarial ACL is really there, so the final "no entry" assertion tests that
+        # Set-PrivateFolderAcl removed it, not that chmod +a quietly did nothing.
+        $LASTEXITCODE | Should -Be 0
+        @(& /bin/ls -led $folder | Where-Object { $_ -match '^\s*\d+:\s' }).Count | Should -BeGreaterThan 0
         Test-PrivateFolderAcl -Path $folder -UserAccess Full | Should -BeFalse
         Set-PrivateFolderAcl -Path $folder -UserAccess Full
         Test-PrivateFolderAcl -Path $folder -UserAccess Full | Should -BeTrue

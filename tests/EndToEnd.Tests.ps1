@@ -293,6 +293,7 @@ Describe 'managed folders never keep the permissions of the drive' -Skip:(-not $
         else {
             $null = & /bin/chmod 777 $script:S2.MirrorPath
             $null = & /bin/chmod +a 'group:everyone allow list,search,readattr,file_inherit,directory_inherit' $script:S2.MirrorPath
+            if ($LASTEXITCODE -ne 0) { throw 'could not set the adversarial ACL the test needs' }
         }
         # How many ways another account has in: Everyone entries on Windows; ACL entries plus
         # group or other mode bits on macOS.
@@ -313,6 +314,11 @@ Describe 'managed folders never keep the permissions of the drive' -Skip:(-not $
 
     It 'install takes over an empty mirror that already existed and makes it private' {
         Get-OpenAccess | Should -BeGreaterThan 0
+        # On macOS Get-OpenAccess also counts the mode bits, which 777 alone sets. Prove the ACL entry
+        # is there too, so the post-install count of 0 tests that install removed it.
+        if (-not $script:OnWindowsTest) {
+            @(& /bin/ls -led $script:S2.MirrorPath | Where-Object { $_ -match '^\s*\d+:\s' }).Count | Should -BeGreaterThan 0
+        }
         $run = Invoke-RepoScript -Name 'install.ps1' -Arguments @('-ConfigPath', $script:Config2, '-SkipScheduledTask')
         $run.ExitCode | Should -Be 0 -Because $run.Text
         Get-OpenAccess | Should -Be 0
