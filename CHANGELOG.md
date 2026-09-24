@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] (2026-09-24)
+
+macOS support, in beta.
+
+### Added
+
+- macOS, on PowerShell 7: the daily backup runs as root under launchd, rsync refreshes the mirror,
+  and the folders root writes belong to root with mode 700, readable by your account through one
+  inherited ACL entry. The jobs run the installed copy in `/Library/Application Support/restic-twin`,
+  through a PowerShell only root can change. Beta: it passes the same suite on a GitHub macOS
+  runner, plus a real install as root on a disk image mounted in `/Volumes`, and has not been through
+  daily use on a Mac yet.
+- `backup.ps1 -IfDue`: runs only when nothing succeeded since the last `DailyAt` and the last attempt
+  is at least four hours old. launchd starts the job every hour with it, so a Mac that was off at
+  `DailyAt` catches up within the hour.
+- A `DestinationRoot` under `/Volumes` has to be a mounted drive. With the drive unplugged the run
+  fails, instead of writing a second history into a folder on the boot disk.
+- `mirror_exit_code` in the run record, for robocopy or rsync. `robocopy_exit_code` stays on Windows
+  for what already reads it.
+
+### Changed
+
+- What differs between the platforms moved from `common.ps1` into `windows.ps1` and `macos.ps1`,
+  which define the same functions. Windows behaves as in 1.0.0.
+
 ## [1.0.0] (2026-09-23)
 
 First public release, from a personal backup that ran every day for three months.
@@ -41,4 +66,5 @@ First public release, from a personal backup that ran every day for three months
 - A failed run claimed to retry every 15 minutes; the Task Scheduler never does that for an exit
   code, and the docs now say so.
 
+[1.1.0]: https://github.com/thalesholleben/restic-twin/releases/tag/v1.1.0
 [1.0.0]: https://github.com/thalesholleben/restic-twin/releases/tag/v1.0.0

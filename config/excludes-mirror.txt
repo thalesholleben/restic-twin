@@ -1,7 +1,8 @@
 # Names left out of the mirror only. The snapshot still keeps them.
 #
-# For files whose permissions let only your account read them: the daily task reads the source as
-# SYSTEM, restic uses backup privileges and gets them anyway, robocopy does not and fails with
+# For files that should only exist encrypted, like production secrets. And on Windows, for files
+# whose permissions let only your account read them: the daily task reads the source as SYSTEM,
+# restic uses backup privileges and gets them anyway, robocopy does not and fails with
 # "ERROR 5 (0x00000005) Access is denied". Put the name here, and the file stays in the encrypted
 # history and out of the plain mirror. Do not loosen the file's permissions instead.
 #

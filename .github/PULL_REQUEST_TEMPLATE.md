@@ -4,10 +4,11 @@
 
 ## How I tested it
 
-<!-- What you actually ran, on which Windows version. -->
+<!-- What you actually ran, on which Windows or macOS version. -->
 
 - [ ] `Invoke-Pester -Path tests` green on PowerShell 7
 - [ ] `Invoke-Pester -Path tests` green on Windows PowerShell 5.1
+- [ ] Touches macOS: the macOS jobs of CI are green
 - [ ] Behaviour change: `README.md`, `README.pt-BR.md` and the page under `docs/` updated
 - [ ] New behaviour: covered by a test that fails without it, using temporary folders only
 

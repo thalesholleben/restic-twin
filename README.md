@@ -4,10 +4,11 @@
 
 <h1 align="center">restic-twin</h1>
 
-<p align="center"><strong>Your projects folder, backed up every day to a second drive: an encrypted restic history you can go back in, and a plain copy you open in Explorer.</strong></p>
+<p align="center"><strong>Your projects folder, backed up every day to a second drive: an encrypted restic history you can go back in, and a plain copy you open in Explorer or Finder.</strong></p>
 
 <p align="center">
   <a href="#install">Install</a> ·
+  <a href="#macos-beta">macOS (beta)</a> ·
   <a href="#how-a-day-goes">How a day goes</a> ·
   <a href="docs/configuration.md">Configuration</a> ·
   <a href="docs/restore.md">Restore</a> ·
@@ -19,6 +20,7 @@
   <a href="https://github.com/thalesholleben/restic-twin/actions/workflows/ci.yml"><img src="https://github.com/thalesholleben/restic-twin/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2e9d7f?style=flat-square&labelColor=171717" alt="MIT license" /></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/Windows-10%20%7C%2011-a0a29a?style=flat-square&labelColor=171717" alt="Windows 10 or 11" /></a>
+  <a href="#macos-beta"><img src="https://img.shields.io/badge/macOS-beta-a0a29a?style=flat-square&labelColor=171717" alt="macOS, beta" /></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/PowerShell-5.1%20%7C%207-2e9d7f?style=flat-square&labelColor=171717" alt="PowerShell 5.1 or 7" /></a>
   <a href="scripts/install-restic.ps1"><img src="https://img.shields.io/badge/restic-0.19.0%20pinned-a0a29a?style=flat-square&labelColor=171717" alt="restic 0.19.0, pinned" /></a>
 </p>
@@ -36,7 +38,7 @@ see, is a weekend of scripting that is easy to get subtly wrong.
 
 restic-twin is that weekend, done and tested. It started as the backup of one developer's workspace,
 run every day since mid-2026, and the public version fixes what that daily use turned up, listed in
-[what daily use found](#what-daily-use-found).
+[what daily use found](#what-daily-use-found). It runs on Windows, and in beta on macOS.
 
 ## What you get
 
@@ -70,6 +72,9 @@ E:\restic-twin\
    mirror too, but it is still in yesterday's snapshot.
 5. Retention keeps one snapshot for each of the last 7 days and one for each of the last 6 months.
    Once a week restic also prunes unused data and checks the repository.
+
+On a Mac the same day runs under launchd, as root, with rsync for the mirror and without VSS, and a
+Mac that was off at 19:00 catches up within the hour after it starts. See [macOS](#macos-beta).
 
 Hot copies are for the two or three files that change all day, like a notes file or a board, where
 one copy a day is not enough. Every 5 minutes, while you are signed in, each set of files you listed
@@ -117,6 +122,41 @@ Run the first backup instead of waiting for 19:00:
 Start-ScheduledTask -TaskName 'restic-twin daily backup'
 ```
 
+### macOS (beta)
+
+The same scripts run on a Mac, Apple silicon or Intel. launchd runs the daily backup as root the way
+the Task Scheduler runs it as SYSTEM, rsync refreshes the mirror, and the folders root writes belong
+to root, mode 700, with one entry that lets your account read them. Beta means it passes the same
+tests on a GitHub macOS runner, including a real install as root on a drive mounted in `/Volumes`,
+but it has not been through daily use on a Mac yet. [Tell us](https://github.com/thalesholleben/restic-twin/issues)
+what you find.
+
+You need:
+
+- PowerShell 7 installed for the whole Mac, `brew install --cask powershell` or the `.pkg` from the
+  [PowerShell releases](https://github.com/PowerShell/PowerShell/releases). The daily job runs it as
+  root, so it has to be the copy in `/usr/local/microsoft/powershell/7`, which only root can change.
+- A backup drive formatted APFS or Mac OS Extended, with "Ignore ownership on this volume" off in its
+  Get Info window. On exFAT it works, but nothing on it stays private.
+- Full Disk Access for that PowerShell if the source is in Desktop, Documents or Downloads, or if
+  macOS refuses the job the backup drive: see
+  [troubleshooting](docs/troubleshooting.md#operation-not-permitted-on-macos). A source elsewhere,
+  like `~/Projects`, needs nothing.
+
+```sh
+git clone https://github.com/thalesholleben/restic-twin.git
+cd restic-twin
+cp config/settings.example.macos.psd1 config/settings.psd1
+nano config/settings.psd1      # set SourcePath and DestinationRoot, save
+sudo pwsh ./scripts/install.ps1
+sudo launchctl kickstart system/com.restic-twin.daily      # the first backup, now
+```
+
+The installer does what it does on Windows, with `/Library/Application Support/restic-twin` as the
+installed copy. The daily job runs at `DailyAt` and also every hour with `-IfDue`, which backs up
+only when nothing succeeded since the last `DailyAt`: launchd does not run a job it missed while the
+Mac was off. The password is in `recovery/restic-password.txt`, readable by you: copy it now.
+
 ## Everyday use
 
 | You want to | Run |
@@ -127,6 +167,11 @@ Start-ScheduledTask -TaskName 'restic-twin daily backup'
 | Bring back one folder from an older snapshot | `.\scripts\restore.ps1 -Snapshot 4bd2e9a1 -Include '/docs'` |
 | Change a setting | edit `config\settings.psd1`, then run `.\scripts\install.ps1` again, elevated |
 | Remove the tasks and the installed copy, keeping every backup | `.\scripts\uninstall.ps1`, elevated |
+
+On macOS the same scripts run with `pwsh ./scripts/status.ps1` and `pwsh ./scripts/restore.ps1`, and
+with `sudo` where the table says elevated: `sudo pwsh ./scripts/install.ps1`, `sudo pwsh
+./scripts/uninstall.ps1`, and a backup right now with `sudo pwsh '/Library/Application
+Support/restic-twin/scripts/backup.ps1'`.
 
 For yesterday's version of a file, the mirror has today's and the history has the rest; see
 [restore](docs/restore.md). `status.ps1` also tells you when the tasks still run an older copy of
@@ -157,21 +202,23 @@ one row per path, and the JSONL keeps every line restic printed. A full sample i
 
 ## Safety rails
 
-- **The mirror refresh never runs into a folder it did not create.** robocopy `/MIR` deletes
-  whatever the destination has and the source does not, so the mirror folder has to be empty, or
-  carry the marker restic-twin wrote there naming this very source.
+- **The mirror refresh never runs into a folder it did not create.** robocopy `/MIR` and rsync
+  `--delete` delete whatever the destination has and the source does not, so the mirror folder has
+  to be empty, or carry the marker restic-twin wrote there naming this very source.
 - **The history is written before the mirror**, so a deletion is always still in the previous
   snapshot when the mirror loses it.
 - **Restores go to a new folder**, never over an existing one and never inside the source.
 - **The installer never replaces a password.** When a repository exists and its password file is
   missing, it stops instead of creating a new one that would not open the history.
-- **Everything that runs as SYSTEM runs from Program Files**, where a normal user cannot change it.
-  A script in your profile that SYSTEM runs every night would hand SYSTEM to anything running as you.
-- **What SYSTEM writes, your account can only read.** The history, the mirror, the reports and the
-  logs belong to Administrators once the tasks are installed. Nothing running as you, ransomware
-  included, can delete or encrypt them, swap a file the daily task reads back, or redirect its writes
-  with a junction. You still open, search and copy from all of it, and you keep full control of the
-  hot copies and the restores.
+- **Everything that runs as SYSTEM or root runs from a copy only administrators can change**,
+  Program Files on Windows and `/Library/Application Support` on macOS, through a PowerShell only
+  they can replace. A script in your profile that SYSTEM runs every night would hand SYSTEM to
+  anything running as you.
+- **What SYSTEM or root writes, your account can only read.** The history, the mirror, the reports
+  and the logs belong to Administrators (to root, on macOS) once the jobs are installed. Nothing
+  running as you, ransomware included, can delete or encrypt them, swap a file the daily job reads
+  back, or redirect its writes with a junction or a link. You still open, search and copy from all
+  of it, and you keep full control of the hot copies and the restores.
 - **A run that could not read a file fails, and names it**, instead of reporting success with a
   hole in the snapshot. The fix is one line in the exclude list or a permission change.
 - **Settings are checked before anything runs**: a source inside the destination, a password inside
@@ -197,7 +244,10 @@ all fixed and covered by tests here:
   rights. Copy the history somewhere else with `restic copy`, keep the drive unplugged between
   backups, or both.
 - **One source folder per machine.** Put what you protect under one folder.
-- **Windows only**: it is PowerShell, the Task Scheduler, VSS and robocopy.
+- **macOS is beta.** It passes the same tests as Windows on a GitHub macOS runner, plus a real
+  install as root, and has not been through daily use on a Mac yet. There is no VSS there: a file
+  that a program is writing during the backup is read as it is at that moment.
+- **Windows and macOS only.** There is no Linux adapter.
 - **A file that is always open in exclusive mode**, like a running database or a VM disk, is in the
   snapshot (through VSS) but makes the mirror fail. List its name in `config\excludes-mirror.txt`.
 
