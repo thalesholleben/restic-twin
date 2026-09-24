@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" width="1280" height="320" role="img" aria-label="restic-twin: an encrypted history you can go back in, and a plain copy you just open.">
+  <style>
+    .bg { fill: #0b1016; }
+    .fg { fill: #e8ecef; }
+    .muted { fill: #8d9aa6; }
+    .accent { fill: #34d399; }
+    .card { fill: #111a22; stroke: #223240; stroke-width: 2; }
+    .hist { fill: #111a22; stroke: #a78bfa; stroke-width: 2.5; }
+    .mir { fill: #111a22; stroke: #34d399; stroke-width: 2.5; }
+    .glyph-hist { fill: none; stroke: #a78bfa; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    .glyph-mir { fill: none; stroke: #34d399; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    .glyph-src { fill: none; stroke: #8d9aa6; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    .line { fill: none; stroke: #3a4b59; stroke-width: 2.5; stroke-linecap: round; }
+    .line-hist { fill: none; stroke: #a78bfa; stroke-width: 2.5; stroke-linecap: round; }
+    .line-mir { fill: none; stroke: #34d399; stroke-width: 2.5; stroke-linecap: round; }
+    text { font-family: ui-monospace, SFMono-Regular, 'Cascadia Mono', Consolas, 'Liberation Mono', Menlo, monospace; }
+    @media (prefers-color-scheme: light) {
+      .bg { fill: #f6f7f5; }
+      .fg { fill: #15181b; }
+      .muted { fill: #56626c; }
+      .accent { fill: #047857; }
+      .card { fill: #ffffff; stroke: #d6dce1; }
+      .hist { fill: #ffffff; stroke: #6d28d9; }
+      .mir { fill: #ffffff; stroke: #047857; }
+      .glyph-hist { stroke: #6d28d9; }
+      .glyph-mir { stroke: #047857; }
+      .glyph-src { stroke: #56626c; }
+      .line { stroke: #b9c2c9; }
+      .line-hist { stroke: #6d28d9; }
+      .line-mir { stroke: #047857; }
+    }
+  </style>
+
+  <rect class="bg" width="1280" height="320" rx="18"/>
+
+  <text x="72" y="150" font-size="68" font-weight="700"><tspan class="fg">restic-</tspan><tspan class="accent">twin</tspan></text>
+  <text class="muted" x="74" y="206" font-size="24">An encrypted history you can go back in,</text>
+  <text class="muted" x="74" y="242" font-size="24">and a plain copy you just open.</text>
+
+  <!-- source to the two copies -->
+  <path class="line" d="M 902 160 L 940 160"/>
+  <path class="line-hist" d="M 940 160 C 968 160 968 100 1000 100 L 1010 100"/>
+  <path class="line-mir" d="M 940 160 C 968 160 968 220 1000 220 L 1010 220"/>
+
+  <!-- source -->
+  <rect class="card" x="752" y="126" width="150" height="68" rx="12"/>
+  <path class="glyph-src" d="M 772 150 L 772 172 L 800 172 L 800 154 L 788 154 L 784 150 Z"/>
+  <text class="fg" x="812" y="166" font-size="17" font-weight="600">Projects</text>
+
+  <!-- history: encrypted -->
+  <rect class="hist" x="1010" y="64" width="208" height="72" rx="12"/>
+  <rect class="glyph-hist" x="1030" y="96" width="22" height="18" rx="3"/>
+  <path class="glyph-hist" d="M 1035 96 L 1035 90 A 6 6 0 0 1 1047 90 L 1047 96"/>
+  <text class="fg" x="1066" y="97" font-size="18" font-weight="600">history</text>
+  <text class="muted" x="1066" y="119" font-size="13">encrypted, daily</text>
+
+  <!-- mirror: plain copy -->
+  <rect class="mir" x="1010" y="184" width="208" height="72" rx="12"/>
+  <path class="glyph-mir" d="M 1030 210 L 1030 234 L 1054 234 L 1054 214 L 1044 214 L 1040 210 Z"/>
+  <text class="fg" x="1066" y="217" font-size="18" font-weight="600">mirror</text>
+  <text class="muted" x="1066" y="239" font-size="13">plain, open it</text>
+</svg>

@@ -1,0 +1,65 @@
+name: Bug report
+description: Something does not work the way the README says it does
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Logs and reports show your file names. Replace anything you would not publish before
+        pasting. Security problems go through
+        [Security Advisories](https://github.com/thalesholleben/restic-twin/security/advisories/new),
+        not here.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got.
+      placeholder: The daily task ran at 19:00 and latest.json says failed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: latest-json
+    attributes:
+      label: logs\latest.json
+      description: The last run record, with your paths replaced.
+      render: json
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 Pro 24H2
+    validations:
+      required: true
+
+  - type: input
+    id: powershell
+    attributes:
+      label: PowerShell version
+      description: Output of `$PSVersionTable.PSVersion`, and whether the task uses pwsh or powershell.
+      placeholder: 7.5.2, task uses pwsh
+    validations:
+      required: true
+
+  - type: input
+    id: restic
+    attributes:
+      label: restic version
+      description: First line of `bin\version.txt`.
+      placeholder: restic 0.19.0
+
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part
+      multiple: true
+      options:
+        - install
+        - daily backup (snapshot)
+        - change report
+        - mirror
+        - hot copies
+        - restore
+        - status

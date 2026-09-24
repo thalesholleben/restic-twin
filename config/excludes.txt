@@ -1,0 +1,51 @@
+# Names left out of both the snapshot and the mirror. One file or folder name per line, wildcards
+# allowed, case ignored. No paths: restic and robocopy both read this file, and they agree on names,
+# not on paths. Keep it conservative: only what can be rebuilt or is temporary.
+
+# Dependencies and package caches
+node_modules
+.pnpm-store
+.npm
+.yarn
+
+# Build output and tool caches
+.cache
+.expo
+.next
+.nuxt
+.turbo
+.parcel-cache
+.vite
+dist
+build
+out
+coverage
+target
+
+# Python
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.venv
+venv
+
+# Temporary files
+tmp
+temp
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Names Windows cannot open (a file literally called "nul", usually created by a tool running a
+# Unix command), and files your antivirus blocks, go here too, one by one. Never switch the
+# antivirus off to get a backup through.
+nul

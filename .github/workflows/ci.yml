@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (${{ matrix.shell }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pwsh is PowerShell 7; powershell is the Windows PowerShell 5.1 every Windows ships with.
+        shell: [pwsh, powershell]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pester 5.9.1
+        run: |
+          [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+          Install-Module Pester -RequiredVersion 5.9.1 -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: restic, pinned and checksum-verified
+        run: .\scripts\install-restic.ps1
+
+      - name: Tests
+        run: |
+          Import-Module Pester -RequiredVersion 5.9.1
+          $config = New-PesterConfiguration
+          $config.Run.Path = 'tests'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
+
+      - name: Nothing downloaded or personal is committed
+        run: |
+          foreach ($path in @('bin/restic.exe', 'bin/version.txt', 'config/settings.psd1')) {
+            if (git ls-files $path) { throw "$path must never be committed" }
+          }
+
+  system-install:
+    # The path users run: install for real, the daily task as SYSTEM with VSS, then uninstall.
+    # Only on a throwaway runner, never on a machine anyone cares about.
+    name: Install and run as SYSTEM
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: restic, pinned and checksum-verified
+        shell: pwsh
+        run: .\scripts\install-restic.ps1
+
+      - name: Install, run the daily task, uninstall
+        shell: pwsh
+        run: .\tests\ci-system-install.ps1

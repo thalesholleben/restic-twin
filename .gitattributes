@@ -1,0 +1,10 @@
+* text=auto eol=lf
+
+# Windows script hosts are happier with CRLF
+*.ps1 text eol=crlf
+*.psd1 text eol=crlf
+*.vbs text eol=crlf
+*.txt text eol=crlf
+
+*.png binary
+*.exe binary

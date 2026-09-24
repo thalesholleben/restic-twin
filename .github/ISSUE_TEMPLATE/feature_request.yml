@@ -1,0 +1,32 @@
+name: Idea
+description: Suggest something restic-twin should do
+labels: [idea]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        restic-twin stays small on purpose: PowerShell, restic and robocopy, no modules, no service.
+        An idea that needs any of those has to earn it, so start with the use case.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The situation, not the solution. What does restic-twin not cover today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: How you picture it working, including the setting or the script it would touch.
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Does it fit the project
+      options:
+        - label: It needs no PowerShell module or package to install
+        - label: It works on Windows PowerShell 5.1 as well as PowerShell 7
+        - label: It never deletes or overwrites anything outside the destination folders

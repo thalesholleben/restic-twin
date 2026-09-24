@@ -1,0 +1,18 @@
+# Downloaded by scripts/install-restic.ps1, never committed
+bin/restic.exe
+bin/version.txt
+
+# Your own settings: they hold your paths
+config/settings.psd1
+
+# Editors and OS
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+
+# Pester output
+testResults.xml
+coverage.xml
