@@ -106,7 +106,18 @@ Describe 'Invoke-HotCopySet' {
         $r = Invoke-HotCopySet -Set $script:Set -HotCopiesPath $script:Copies -Now $script:T0.AddMinutes(5)
         $r.Result | Should -Be 'unchanged'
         @(Get-HotCopyVersions -SetPath (Join-TestPath $script:Copies 'board')).Count | Should -Be 1
-        @(Get-ChildItem -LiteralPath (Join-TestPath $script:Copies 'board') -Directory -Filter '.incoming-*').Count | Should -Be 0
+        @(Get-ChildItem -LiteralPath (Join-TestPath $script:Copies 'board') -Directory -Filter '.incoming-*' -Force).Count | Should -Be 0
+    }
+
+    It 'sees a change in a file whose name starts with a dot' {
+        $dotfile = Join-TestPath $script:Root 'src\.env'
+        New-TextFile -Path $dotfile -Content 'A=1'
+        $set = @{ Name = 'env'; Files = @($dotfile); Keep = 3 }
+        Invoke-HotCopySet -Set $set -HotCopiesPath $script:Copies -Now $script:T0 | Out-Null
+        New-TextFile -Path $dotfile -Content 'A=2'
+        $r = Invoke-HotCopySet -Set $set -HotCopiesPath $script:Copies -Now $script:T0.AddMinutes(5)
+        $r.Result | Should -Be 'copied'
+        Get-Content -LiteralPath (Join-TestPath $script:Copies "env\$($r.Version)\.env") | Should -Be 'A=2'
     }
 
     It 'copies both files again when only one of them changed' {

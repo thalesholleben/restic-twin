@@ -731,9 +731,11 @@ function Get-HotCopyVersions {
 }
 
 function Test-SameFolderContent {
+    # -Force: on macOS a name that starts with a dot is hidden, and a hot copy of .env would never
+    # look changed.
     param([Parameter(Mandatory = $true)][string]$Left, [Parameter(Mandatory = $true)][string]$Right)
-    $a = @(Get-ChildItem -LiteralPath $Left -File | Sort-Object Name)
-    $b = @(Get-ChildItem -LiteralPath $Right -File | Sort-Object Name)
+    $a = @(Get-ChildItem -LiteralPath $Left -File -Force | Sort-Object Name)
+    $b = @(Get-ChildItem -LiteralPath $Right -File -Force | Sort-Object Name)
     if ($a.Count -ne $b.Count) { return $false }
     for ($i = 0; $i -lt $a.Count; $i++) {
         if ($a[$i].Name -ne $b[$i].Name -or $a[$i].Length -ne $b[$i].Length) { return $false }
@@ -755,7 +757,7 @@ function Invoke-HotCopySet {
     }
     $setPath = Join-Path $HotCopiesPath $Set.Name
     New-Item -ItemType Directory -Path $setPath -Force | Out-Null
-    Get-ChildItem -LiteralPath $setPath -Directory -Filter '.incoming-*' | Remove-Item -Recurse -Force
+    Get-ChildItem -LiteralPath $setPath -Directory -Filter '.incoming-*' -Force | Remove-Item -Recurse -Force
     $incoming = Join-Path $setPath ('.incoming-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $incoming | Out-Null
     try {
