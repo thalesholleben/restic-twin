@@ -32,7 +32,8 @@ file back and checks it against the history.
 It works from a normal shell: your account can read the history, and restic then runs with
 `--no-lock`, because it cannot write its lock file there. Run it elevated when you want every Windows
 attribute and permission back; without elevation the content comes back identical, but restic may not
-be able to reapply some metadata.
+be able to reapply some metadata. On macOS, `pwsh ./scripts/restore.ps1` with the same parameters;
+what comes back belongs to you.
 
 ## Finding the snapshot you want
 
@@ -46,7 +47,9 @@ $password = 'E:\restic-twin\recovery\restic-password.txt'
 & $restic --repo $repo --password-file $password --no-lock ls 4bd2e9a1 /C/Users/you/Projects/docs
 ```
 
-Inside a snapshot, `C:\Users\you\Projects` is written `/C/Users/you/Projects`. The change reports in
+Inside a snapshot, `C:\Users\you\Projects` is written `/C/Users/you/Projects`; a macOS path, like
+`/Users/you/Projects`, stays as it is. On a Mac the same commands take `./bin/restic`, the repository
+under `/Volumes/<drive>/restic-twin/history`, and the password next to it. The change reports in
 `reports\` tell you on which day a file changed or disappeared, which is usually the fastest way to
 pick the snapshot.
 
@@ -54,7 +57,7 @@ pick the snapshot.
 
 Everything you need is on the backup drive, plus the password if you moved it:
 
-1. Download restic for Windows from the [official releases](https://github.com/restic/restic/releases).
+1. Download restic for that computer from the [official releases](https://github.com/restic/restic/releases).
 2. Read `recovery\README.txt` on the drive: it has the exact paths.
 3. List the snapshots and restore one:
 
@@ -63,7 +66,8 @@ restic --repo E:\restic-twin\history --password-file E:\restic-twin\recovery\res
 restic --repo E:\restic-twin\history --password-file E:\restic-twin\recovery\restic-password.txt restore latest:/C/Users/you/Projects --target D:\restored
 ```
 
-restic runs on Linux and macOS too, so the history can be read from any machine, not only Windows.
+restic runs on Windows, Linux and macOS, so the history can be read from any machine, whichever
+system wrote it. A Mac's snapshot restores with `restore latest:/Users/you/Projects`.
 
 Do not edit, rename or delete anything inside `history\` by hand. restic keeps it consistent; a file
 removed there can corrupt snapshots that look unrelated.

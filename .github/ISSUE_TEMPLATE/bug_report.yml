@@ -22,15 +22,25 @@ body:
   - type: textarea
     id: latest-json
     attributes:
-      label: logs\latest.json
+      label: logs/latest.json
       description: The last run record, with your paths replaced.
       render: json
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - macOS (beta)
+    validations:
+      required: true
 
   - type: input
     id: windows
     attributes:
-      label: Windows version
-      placeholder: Windows 11 Pro 24H2
+      label: Windows or macOS version
+      placeholder: Windows 11 Pro 24H2, or macOS 15.6 on Apple silicon
     validations:
       required: true
 
@@ -38,7 +48,7 @@ body:
     id: powershell
     attributes:
       label: PowerShell version
-      description: Output of `$PSVersionTable.PSVersion`, and whether the task uses pwsh or powershell.
+      description: Output of `$PSVersionTable.PSVersion`, and on Windows whether the task uses pwsh or powershell.
       placeholder: 7.5.2, task uses pwsh
     validations:
       required: true
@@ -47,7 +57,7 @@ body:
     id: restic
     attributes:
       label: restic version
-      description: First line of `bin\version.txt`.
+      description: First line of `bin/version.txt`.
       placeholder: restic 0.19.0
 
   - type: dropdown

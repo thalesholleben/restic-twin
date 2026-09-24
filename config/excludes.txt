@@ -1,6 +1,7 @@
 # Names left out of both the snapshot and the mirror. One file or folder name per line, wildcards
-# allowed, case ignored. No paths: restic and robocopy both read this file, and they agree on names,
-# not on paths. Keep it conservative: only what can be rebuilt or is temporary.
+# allowed; case is ignored on Windows and matched on macOS. No paths: restic and the mirror copy
+# (robocopy, rsync) all read this file, and they agree on names, not on paths. Keep it
+# conservative: only what can be rebuilt or is temporary.
 
 # Dependencies and package caches
 node_modules

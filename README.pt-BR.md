@@ -4,10 +4,11 @@
 
 <h1 align="center">restic-twin</h1>
 
-<p align="center"><strong>Sua pasta de projetos com backup todo dia num segundo disco: um histórico criptografado do restic para voltar no tempo e uma cópia comum que você abre no Explorer.</strong></p>
+<p align="center"><strong>Sua pasta de projetos com backup todo dia num segundo disco: um histórico criptografado do restic para voltar no tempo e uma cópia comum que você abre no Explorer ou no Finder.</strong></p>
 
 <p align="center">
   <a href="#instalação">Instalação</a> ·
+  <a href="#macos-beta">macOS (beta)</a> ·
   <a href="#como-é-um-dia">Como é um dia</a> ·
   <a href="docs/configuration.md">Configuração</a> ·
   <a href="docs/restore.md">Restauração</a> ·
@@ -19,6 +20,7 @@
   <a href="https://github.com/thalesholleben/restic-twin/actions/workflows/ci.yml"><img src="https://github.com/thalesholleben/restic-twin/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-2e9d7f?style=flat-square&labelColor=171717" alt="Licença MIT" /></a>
   <a href="#requisitos"><img src="https://img.shields.io/badge/Windows-10%20%7C%2011-a0a29a?style=flat-square&labelColor=171717" alt="Windows 10 ou 11" /></a>
+  <a href="#macos-beta"><img src="https://img.shields.io/badge/macOS-beta-a0a29a?style=flat-square&labelColor=171717" alt="macOS, beta" /></a>
   <a href="#requisitos"><img src="https://img.shields.io/badge/PowerShell-5.1%20%7C%207-2e9d7f?style=flat-square&labelColor=171717" alt="PowerShell 5.1 ou 7" /></a>
   <a href="scripts/install-restic.ps1"><img src="https://img.shields.io/badge/restic-0.19.0%20fixado-a0a29a?style=flat-square&labelColor=171717" alt="restic 0.19.0, versão fixada" /></a>
 </p>
@@ -36,7 +38,8 @@ para enxergar, é um fim de semana de script fácil de errar nos detalhes.
 
 O restic-twin é esse fim de semana, pronto e testado. Ele começou como o backup do workspace de um
 desenvolvedor, rodando todo dia desde meados de 2026, e a versão pública corrige o que esse uso diário
-revelou, listado em [o que o uso diário mostrou](#o-que-o-uso-diário-mostrou).
+revelou, listado em [o que o uso diário mostrou](#o-que-o-uso-diário-mostrou). Roda no Windows e, em
+beta, no macOS.
 
 ## O que você ganha
 
@@ -71,6 +74,9 @@ E:\restic-twin\
    também, mas continua no snapshot de ontem.
 5. A retenção guarda um snapshot para cada um dos últimos 7 dias e um para cada um dos últimos 6 meses.
    Uma vez por semana o restic também limpa os dados sem uso e confere o repositório.
+
+No Mac o mesmo dia roda pelo launchd, como root, com o rsync no espelho e sem VSS, e um Mac que estava
+desligado às 19:00 faz o backup dentro da hora seguinte a ligar. Veja [macOS](#macos-beta).
 
 As hot copies servem para os dois ou três arquivos que mudam o dia inteiro, como um arquivo de notas ou
 um quadro, em que uma cópia por dia é pouco. A cada 5 minutos, enquanto você está logado, cada conjunto
@@ -118,6 +124,42 @@ Rode o primeiro backup em vez de esperar as 19:00:
 Start-ScheduledTask -TaskName 'restic-twin daily backup'
 ```
 
+### macOS (beta)
+
+Os mesmos scripts rodam no Mac, Apple silicon ou Intel. O launchd roda o backup diário como root, do
+jeito que o Agendador roda como SYSTEM, o rsync atualiza o espelho, e as pastas que o root grava
+pertencem ao root, modo 700, com uma entrada que deixa a sua conta ler. Beta quer dizer que passa nos
+mesmos testes num runner macOS do GitHub, inclusive numa instalação real como root com um disco
+montado em `/Volumes`, mas ainda não passou por uso diário num Mac.
+[Conte o que encontrar](https://github.com/thalesholleben/restic-twin/issues).
+
+Você precisa de:
+
+- PowerShell 7 instalado para o Mac inteiro, com `brew install --cask powershell` ou o `.pkg` das
+  [releases do PowerShell](https://github.com/PowerShell/PowerShell/releases). A tarefa diária roda
+  ele como root, então tem que ser a cópia em `/usr/local/microsoft/powershell/7`, que só o root
+  consegue alterar.
+- Um disco de backup formatado em APFS ou Mac OS Expandido, com "Ignorar propriedade neste volume"
+  desmarcado na janela Obter Informações dele. Em exFAT funciona, mas nada ali fica privado.
+- Acesso Total ao Disco para esse PowerShell se a origem estiver em Mesa, Documentos ou Transferências,
+  ou se o macOS negar à tarefa o disco de backup: veja
+  [problemas comuns](docs/troubleshooting.md#operation-not-permitted-on-macos). Uma origem em outro
+  lugar, como `~/Projects`, não precisa de nada.
+
+```sh
+git clone https://github.com/thalesholleben/restic-twin.git
+cd restic-twin
+cp config/settings.example.macos.psd1 config/settings.psd1
+nano config/settings.psd1      # defina SourcePath e DestinationRoot e salve
+sudo pwsh ./scripts/install.ps1
+sudo launchctl kickstart system/com.restic-twin.daily      # o primeiro backup, agora
+```
+
+O instalador faz o mesmo que no Windows, com `/Library/Application Support/restic-twin` como cópia
+instalada. A tarefa diária roda no `DailyAt` e também a cada hora com `-IfDue`, que só faz backup
+quando nada deu certo desde o último `DailyAt`: o launchd não roda uma tarefa que ele perdeu com o Mac
+desligado. A senha fica em `recovery/restic-password.txt`, que você consegue ler: copie agora.
+
 ## Uso no dia a dia
 
 | Você quer | Rode |
@@ -128,6 +170,11 @@ Start-ScheduledTask -TaskName 'restic-twin daily backup'
 | Trazer uma pasta de um snapshot antigo | `.\scripts\restore.ps1 -Snapshot 4bd2e9a1 -Include '/docs'` |
 | Mudar uma configuração | edite `config\settings.psd1` e rode `.\scripts\install.ps1` de novo, como administrador |
 | Remover as tarefas e a cópia instalada, mantendo todos os backups | `.\scripts\uninstall.ps1`, como administrador |
+
+No macOS os mesmos scripts rodam com `pwsh ./scripts/status.ps1` e `pwsh ./scripts/restore.ps1`, e
+com `sudo` onde a tabela diz administrador: `sudo pwsh ./scripts/install.ps1`, `sudo pwsh
+./scripts/uninstall.ps1`, e um backup agora com `sudo pwsh '/Library/Application
+Support/restic-twin/scripts/backup.ps1'`.
 
 Para a versão de ontem de um arquivo, o espelho tem a de hoje e o histórico tem o resto; veja
 [restauração](docs/restore.md). O `status.ps1` também avisa quando as tarefas ainda rodam uma cópia
@@ -158,22 +205,24 @@ por caminho, e o JSONL guarda cada linha que o restic imprimiu. Um exemplo compl
 
 ## Travas de segurança
 
-- **O espelho nunca é atualizado numa pasta que ele não criou.** O `/MIR` do robocopy apaga o que o
-  destino tem e a origem não, então a pasta do espelho precisa estar vazia ou ter o marcador que o
-  restic-twin gravou nela com o nome desta mesma origem.
+- **O espelho nunca é atualizado numa pasta que ele não criou.** O `/MIR` do robocopy e o `--delete`
+  do rsync apagam o que o destino tem e a origem não, então a pasta do espelho precisa estar vazia ou
+  ter o marcador que o restic-twin gravou nela com o nome desta mesma origem.
 - **O histórico é gravado antes do espelho**, então uma exclusão sempre continua no snapshot anterior
   quando o espelho a perde.
 - **A restauração vai para uma pasta nova**, nunca por cima de uma existente e nunca dentro da origem.
 - **O instalador nunca troca uma senha.** Quando existe um repositório e o arquivo de senha sumiu, ele
   para em vez de criar uma senha nova que não abriria o histórico.
-- **Tudo o que roda como SYSTEM roda a partir do Program Files**, onde um usuário comum não consegue
-  mexer. Um script no seu perfil executado pelo SYSTEM toda noite entregaria o SYSTEM para qualquer
-  coisa rodando como você.
-- **O que o SYSTEM grava, a sua conta só lê.** Depois de instaladas as tarefas, o histórico, o
-  espelho, os relatórios e os logs pertencem aos Administradores. Nada rodando como você, ransomware
-  incluso, consegue apagar ou criptografar esses arquivos, trocar um arquivo que a tarefa diária relê
-  ou desviar as gravações dela com uma junction. Você continua abrindo, pesquisando e copiando tudo, e
-  mantém controle total das hot copies e das restaurações.
+- **Tudo o que roda como SYSTEM ou root roda de uma cópia que só administrador altera**, o Program
+  Files no Windows e o `/Library/Application Support` no macOS, com um PowerShell que só eles
+  conseguem trocar. Um script no seu perfil executado pelo SYSTEM toda noite entregaria o SYSTEM para
+  qualquer coisa rodando como você.
+- **O que o SYSTEM ou o root grava, a sua conta só lê.** Depois de instaladas as tarefas, o
+  histórico, o espelho, os relatórios e os logs pertencem aos Administradores (ao root, no macOS).
+  Nada rodando como você, ransomware incluso, consegue apagar ou criptografar esses arquivos, trocar
+  um arquivo que a tarefa diária relê ou desviar as gravações dela com uma junction ou um link. Você
+  continua abrindo, pesquisando e copiando tudo, e mantém controle total das hot copies e das
+  restaurações.
 - **Uma execução que não conseguiu ler um arquivo falha e diz qual é**, em vez de relatar sucesso com
   um buraco no snapshot. A correção é uma linha na lista de exclusões ou um ajuste de permissão.
 - **As configurações são conferidas antes de qualquer coisa rodar**: origem dentro do destino, senha
@@ -200,7 +249,10 @@ problemas, todos corrigidos e cobertos por teste aqui:
   direitos de administrador. Copie o histórico para outro lugar com `restic copy`, deixe o disco
   desconectado entre os backups, ou os dois.
 - **Uma pasta de origem por máquina.** Coloque o que você protege dentro de uma pasta só.
-- **Só Windows**: é PowerShell, Agendador de Tarefas, VSS e robocopy.
+- **O macOS está em beta.** Passa nos mesmos testes do Windows num runner macOS do GitHub, mais uma
+  instalação real como root, e ainda não passou por uso diário num Mac. Lá não existe VSS: um arquivo
+  que um programa está gravando durante o backup é lido como está naquele momento.
+- **Só Windows e macOS.** Não existe adaptador para Linux.
 - **Um arquivo sempre aberto em modo exclusivo**, como um banco de dados rodando ou um disco de VM, fica
   no snapshot (pelo VSS) mas faz o espelho falhar. Liste o nome dele em `config\excludes-mirror.txt`.
 
